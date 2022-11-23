@@ -3,7 +3,9 @@
 #include <future>
 
 using namespace ventus;
-
+//These macro is defined as test
+#define RAM_SIZE    64
+#define BLOCK_SIZE  64
 #define INSTSIZE64
 #ifdef INSTSIZE64
     typedef uint64_t inst_len;
@@ -13,8 +15,15 @@ using namespace ventus;
 
 class vt_device {
 public:
-    vt_device(RAM *ram);
-    ~vt_device();
+    vt_device()
+        :ram_(RAM_SIZE),
+         processor_(){
+            processor_.attach_ram(&ram_);
+        }
+    ~vt_device(){
+        if(last_task_.valid())
+            last_task_.wait();
+    }
     int alloc_local_mem(inst_len size, inst_len *dev_maddr);
     int free_local_mem(inst_len *dev_maddr);
     int upload(const void *src_data_addr, inst_len dest_addr, uint64_t size, inst_len src_offset);
@@ -37,7 +46,11 @@ public:
         auto aligned_asize = aligned_size(size, BLOCK_SIZE); //返回一个CACHE_BLOCK_SIZE的大小
         data_ = malloc(aligned_asize);
     }
-    ~vt_buffer();
+    ~vt_buffer(){
+        if(data_){
+            free(data_);
+        }
+    }
     void* data() const;
     uint64_t size() const;
     vt_device* device() const;
@@ -45,4 +58,4 @@ private:
     vt_device* device_;
     void *data_;
     uint64_t size_;
-}
+};

@@ -47,9 +47,13 @@
 
 
 /// open the device and connect to it
-int vt_dev_open(vt_device_h* hdevice){
+extern int vt_dev_open(vt_device_h* hdevice){
+    if(hdevice == nullptr)
+        return -1;
+    
+    *hdevice = new vt_device();
+}
+/// Close the device when all the operations are done
+extern int vt_dev_close(vt_device_h hdevice){
     
 }
-
-/// Close the device when all the operations are done
-int vt_dev_close(vt_device_h hdevice);

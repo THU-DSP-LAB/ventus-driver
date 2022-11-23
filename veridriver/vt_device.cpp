@@ -2,20 +2,7 @@
 #include <stdlib.h>
 #include "vt_utils.h"
 
-void* vt_buffer::data() const{
-    return data_;
-}
-uint64_t vt_buffer::size() const{
-    return size_;
-}
-vt_device* vt_buffer::device() const{
-    return device_;
-}
-vt_buffer::~vt_buffer(){
-    if(data_){
-        free(data_);
-    }
-}
+
 
 int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr){
     return ram_.allocate(size, dev_addr);
@@ -43,10 +30,32 @@ int vt_device::start(){
     if(last_task_.valid()){
         last_task_.wait();
     }
-    processor_.run();
+    last_task_ = std::async(std::launch::async, [this]{
+        processor_.run();
+    });
+    return 0;
+
 }
 int vt_device::wait(uint64_t time){
-    if(!last_task_.valid()){
-        last_task_.wait
+    if(!last_task_.valid())
+        return 0;
+    uint64_t timeout = time / 1000;
+    std::chrono::seconds wait_time(1);
+    for(;;){
+        auto status = last_task_.wait_for(wait_time);
+        if (status == std::future_status::ready || timeout-- == 0)
+            break;
     }
+    return 0;
+}
+
+//Implementation of class vt_buffer
+void* vt_buffer::data() const{
+    return data_;
+}
+uint64_t vt_buffer::size() const{
+    return size_;
+}
+vt_device* vt_buffer::device() const{
+    return device_;
 }
