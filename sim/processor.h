@@ -24,7 +24,7 @@ public:
     ~Processor();
 
     void attach_ram(RAM* ram);
-
+    int start();
     int run();
 
 private:

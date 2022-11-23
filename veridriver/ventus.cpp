@@ -47,7 +47,9 @@
 
 
 /// open the device and connect to it
-int vt_dev_open(vt_device_h* hdevice);
+int vt_dev_open(vt_device_h* hdevice){
+    
+}
 
 /// Close the device when all the operations are done
 int vt_dev_close(vt_device_h hdevice);

@@ -1,2 +1,6 @@
 verilator/*
 obj_dir/*
+.vscode/*
+main.exe
+a.exe
+test.cpp
