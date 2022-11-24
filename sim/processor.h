@@ -16,6 +16,23 @@
 #pragma once
 namespace ventus {
 
+typedef struct {
+    inst_len host_req_wg_id;
+    inst_len host_req_num_wf;
+    inst_len host_req_wf_size;
+    inst_len host_req_start_pc;
+    inst_len host_req_vgpr_size_total;
+    inst_len host_req_sgpr_size_total;
+    inst_len host_req_lds_size_total;
+    inst_len host_req_gds_size_total;
+    inst_len host_req_vgpr_size_per_wf;
+    inst_len host_req_sgpr_size_per_wf;
+    inst_len host_req_gds_baseaddr;
+    bool host_req_valid;
+    // bool host_req_ready;
+    bool host_rsp_ready;
+} host_port_t;///< GPGPU和主机之间进行配置参数传递的接口
+
 class RAM;
 
 class Processor{
@@ -24,7 +41,7 @@ public:
     ~Processor();
 
     void attach_ram(RAM* ram);
-    int start();
+    int start(const host_port_t* input_sig );
     int run();
 
 private:

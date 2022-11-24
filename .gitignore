@@ -1,6 +1,7 @@
 verilator/*
 obj_dir/*
 .vscode/*
+.vscode/c_cpp_properties.json
 main.exe
 a.exe
 test.cpp

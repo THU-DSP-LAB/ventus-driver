@@ -1,6 +1,6 @@
 /**
  * @file ventus.h
- * @brief this file defined some ventus driver functions when running OpenCL program
+ * @brief this file defined some ventus driver API when running OpenCL program
  * @author yangzexia
  * @version 1.0
  * @date 2022-11-16
@@ -28,15 +28,18 @@ typedef void* vt_device_h;
 
 typedef void* vt_buffer_h;
 
-// device caps ids
-#define VT_CAPS_VERSION           0x0 
-#define VT_CAPS_MAX_CORES         0x1
-#define VT_CAPS_MAX_WARPS         0x2
-#define VT_CAPS_MAX_THREADS       0x3
-#define VT_CAPS_CACHE_LINE_SIZE   0x4
-#define VT_CAPS_LOCAL_MEM_SIZE    0x5
-#define VT_CAPS_ALLOC_BASE_ADDR   0x6
-#define VT_CAPS_KERNEL_BASE_ADDR  0x7
+// device parameters
+#define   HOST_REQ_WG_ID            
+#define   HOST_REQ_NUM_WF
+#define   HOST_REQ_WF_SIZE
+#define   HOST_REQ_START_PC
+#define   HOST_REQ_VGPR_SIZE_TOTAL
+#define   HOST_REQ_SGPR_SIZE_TOTAL
+#define   HOST_REQ_LDS_SIZE_TOTAL
+#define   HOST_REQ_GDS_SIZE_TOTAL
+#define   HOST_REQ_VGPR_SIZE_PER_WF
+#define   HOST_REQ_SGPR_SIZE_PER_WF
+#define   HOST_REQ_GDS_BASEADDR
 
 #define MAX_TIMEOUT               (60*60*1000)   // 1hr 
 
@@ -47,7 +50,7 @@ int vt_dev_open(vt_device_h* hdevice);
 int vt_dev_close(vt_device_h hdevice);
 
 /// return device configurations
-int vt_dev_caps(vt_device_h hdevice, uint32_t caps_id, uint64_t *value);
+int vt_dev_caps(vt_device_h* hdevice, uint32_t caps_id, uint64_t *value);
 
 /// Allocate shared buffer with device
 int vt_buf_alloc(vt_device_h hdevice, uint64_t size, vt_buffer_h* hbuffer);

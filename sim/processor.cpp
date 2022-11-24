@@ -30,6 +30,8 @@
 
 using namespace ventus;
 
+
+
 /**
  * @brief Processor中定义的嵌套类的实现
  * @todo 各函数的具体实现
@@ -51,25 +53,38 @@ public:
         ram_ = ram;
     }
      /**
-      * @brief GPGPU启动及运行，初始化设备，并传入需配置的参数
+      * @brief GPGPU启动任务，传入任务需配置的参数
+      * 每个任务由多个block组成，driver按block发送配置信息，在接收到一个block的信息之后，
+      * GPGPU即开始执行，执行完毕之后返回相应block的ID
       * @return int 
       */
     int run() {
         int exitcode = 0;
 
         this->reset();
-        while(device_->busy()){///< @todo GPGPU任务完成时返回的信号
+        /// @todo GPGPU任务完成时返回的信号
+        while(device_->busy()){
             this->tick();
             exitcode = -1;///< 发生异常返回值
         }
 
         this->wait(5);
-
+        
         return exitcode;
     }
     /// @todo 打印ram访问请求的函数
     void cout_flush(){
 
+    }
+    /**
+     * @brief   GPGPU启动前复位  
+     * @return int 
+     */
+    void start(const host_port_t* input_sig) {
+        int exitcode = 0;
+        this->reset();
+        ///配置寄存器的操作
+        
     }
 
 private:
@@ -113,7 +128,6 @@ private:
     typedef struct {
 
     } mem_port_t; ///< GPGPU和ram之间的接口信号
-
 };
 
 
@@ -130,4 +144,7 @@ void Processor::attach_ram(RAM* mem) {
 
 int Processor::run() {
     return impl_->run();
+}
+int Processor::start(const host_port_t* input_sig) {
+    return impl_->start(input_sig);
 }

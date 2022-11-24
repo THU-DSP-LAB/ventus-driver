@@ -1,3 +1,18 @@
+/**
+ * @file vt_device.h
+ * @brief 与驱动提供的API对接的类的声明
+ * @author yangzexia (yang-zx17@qq.com)
+ * @version 1.0
+ * @date 2022-11-24
+ * 
+ * @copyright Copyright (c) {2022}  DSPLAB@Tsinghua University
+ * 
+ * @par 修改日志:
+ * <table>
+ * <tr><th>Date       <th>Version <th>Author  <th>Description
+ * <tr><td>2022-11-24 <td>1.0     <td>wangh     <td>首次创建
+ * </table>
+ */
 #include "processor.h"
 #include "vt_memory.h"
 #include <future>
