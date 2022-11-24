@@ -18,6 +18,7 @@
  */
 
 #include "processor.h"
+#include "vt_utils.h"
 
 #include <verilated.h>
 #include <VVentus.h>
@@ -41,7 +42,9 @@ public:
     Impl() {
         device_ = new VVentus();
         ram_ = nullptr;
-
+        for(int i = 0; i < MAX_BLOCK; i++) { 
+            block_finish_list[i] = 0;
+        }
         this->reset();
     }
     ~Impl(){
@@ -58,14 +61,23 @@ public:
       * GPGPU即开始执行，执行完毕之后返回相应block的ID
       * @return int 
       */
-    int run() {
+    int run(host_port_t* input_sig) {
         int exitcode = 0;
 
         this->reset();
         /// @todo GPGPU任务完成时返回的信号
-        while(device_->busy()){
+        // while(device_->busy()){
+        //     this->tick();
+        //     exitcode = -1;///< 发生异常返回值
+        // }
+        int all_block_busy = 1;
+        while(all_block_busy == 1){
+            for(int i = 0; i < MAX_BLOCK; i++) {
+                if(block_finish_list[i] == 0)
+                all_block_busy = 0;
+                break;
+            }
             this->tick();
-            exitcode = -1;///< 发生异常返回值
         }
 
         this->wait(5);
@@ -125,6 +137,7 @@ private:
     VVentus *device_; ///< GPGPU
     RAM* ram_; ///< GPGPU的ram
 
+    int block_finish_list [MAX_BLOCK];
     typedef struct {
 
     } mem_port_t; ///< GPGPU和ram之间的接口信号
@@ -142,8 +155,8 @@ void Processor::attach_ram(RAM* mem) {
     impl_->attach_ram(mem);
 }
 
-int Processor::run() {
-    return impl_->run();
+int Processor::run(host_port_t* input_sig) {
+    return impl_->run(input_sig);
 }
 int Processor::start(const host_port_t* input_sig) {
     return impl_->start(input_sig);
