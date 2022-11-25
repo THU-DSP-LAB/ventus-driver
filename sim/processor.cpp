@@ -64,27 +64,31 @@ public:
     int run(host_port_t* input_sig) {
         int exitcode = 0;
 
-        this->reset();
         /// @todo GPGPU任务完成时返回的信号
         // while(device_->busy()){
         //     this->tick();
         //     exitcode = -1;///< 发生异常返回值
         // }
+        // int all_block_busy = 1;
+        // while(all_block_busy == 1){
+        //     this->tick();
+        //     block_finish_list[device_->io_host_rsp_bits_inflight_wg_buffer_host_wf_done_wg_id] = device_->io_host_rsp_valid;
+        //     for(int i = 0; i < MAX_BLOCK; i++) {
+        //         if(block_finish_list[i] == 1 && block_busy_list[i] == 1) {
+        //             block_busy_list[i] = 0;
+        //             block_finish_list[i] = 0;
+        //         }
+        //         if(block_busy_list[i] == 0)
+        //         all_block_busy = 0;
+        //         break;
+        //     }
+        // }
         int all_block_busy = 1;
-        while(all_block_busy == 1){
-            this->tick();
-            block_finish_list[device_->io_host_rsp_bits_inflight_wg_buffer_host_wf_done_wg_id] = device_->io_host_rsp_valid;
-            for(int i = 0; i < MAX_BLOCK; i++) {
-                if(block_finish_list[i] == 1 && block_busy_list[i] == 1) {
-                    block_busy_list[i] = 0;
-                    block_finish_list[i] = 0;
-                }
-                if(block_busy_list[i] == 0)
-                all_block_busy = 0;
-                break;
-            }
+        for(int i = 0; i < MAX_BLOCK; i++) {
+            if(block_busy_list[i] == 0)
+            all_block_busy = 0;
+            block_busy_list[i] = 1;
         }
-        for(int j = 0; j < input_sig->host_req_wg_id; j++) {
             if(block_busy_list[(int)input_sig->host_req_wg_id] == 0) {
                 device_->io_host_req_bits_host_wg_id = input_sig->host_req_wg_id;
                 device_->io_host_req_bits_host_num_wf = input_sig->host_req_num_wf;
@@ -101,8 +105,7 @@ public:
                 device_->eval();
                 block_busy_list[(int)input_sig->host_req_wg_id] = 1;
             }
-        }
-        this->wait(5);
+
         
         return exitcode;
     }
@@ -141,7 +144,15 @@ private:
 
         device_->clock = 1;
         this->eval();
-
+        // 每个周期读取GPGPU的输出
+        if(device_->io_host_rsp_valid)
+            block_finish_list[device_->io_host_rsp_bits_inflight_wg_buffer_host_wf_done_wg_id] = 1;
+        for(int i = 0; i < MAX_BLOCK; i++) {
+            if(block_finish_list[i] == 1 && block_busy_list[i] == 1) {
+                block_busy_list[i] = 0;
+                block_finish_list[i] = 0;
+            }
+        }
         /// @todo ram的tick实现
     }
 
@@ -151,9 +162,19 @@ private:
 
     void wait(int cycle){
         for(int i = 0; i < cycle; i++){
+            int all_idle = 0;
+            for(int j = 0; j < MAX_BLOCK; j++) {
+                if(block_busy_list[j] == 1) {
+                    all_idle = 1;
+                    break;
+                }
+            }
+            if(all_idle)
+                return;
             this->tick();
         }
     }
+    
 
 private:
     VVentus *device_; ///< GPGPU

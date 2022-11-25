@@ -25,7 +25,10 @@ int vt_device::download(void *dest_data_addr, inst_len src_addr, uint64_t size, 
 
     ram_.read(dest_data_addr + dest_offset, src_addr, asize);
 }
-
+/**
+ * @brief   发送任务，每个任务由多个block组成，每次调用run发送一个block
+ * @return int 
+ */
 int vt_device::start(){
     if(last_task_.valid()){
         last_task_.wait();

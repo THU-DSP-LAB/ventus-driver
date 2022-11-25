@@ -49,7 +49,7 @@ public:
 
 private:
     Processor processor_;
-    RAM ram_;
+    ventus::RAM ram_;
     std::future<void> last_task_;
 };
 
