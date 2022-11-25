@@ -4,6 +4,8 @@
         "chrono": "cpp",
         "cstdint": "cpp",
         "random": "cpp",
-        "*.tcc": "cpp"
+        "*.tcc": "cpp",
+        "typeindex": "cpp",
+        "typeinfo": "cpp"
     }
 }
