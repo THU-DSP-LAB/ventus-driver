@@ -13,6 +13,11 @@
  * <tr><td>2022-11-16 <td>1.0     <td>yangzexia     <td>创建
  * </table>
  */
+#ifdef INSTSIZE64
+    typedef uint64_t inst_len;
+#else
+    typedef uint32_t inst_len;
+#endif
 #pragma once
 namespace ventus {
 
@@ -42,7 +47,7 @@ public:
 
     void attach_ram(RAM* ram);
     int start(const host_port_t* input_sig );
-    int run();
+    int run(host_port_t* input_sig);
 
 private:
 

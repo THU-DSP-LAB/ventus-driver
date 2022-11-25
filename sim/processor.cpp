@@ -72,14 +72,36 @@ public:
         // }
         int all_block_busy = 1;
         while(all_block_busy == 1){
+            this->tick();
+            block_finish_list[device_->io_host_rsp_bits_inflight_wg_buffer_host_wf_done_wg_id] = device_->io_host_rsp_valid;
             for(int i = 0; i < MAX_BLOCK; i++) {
-                if(block_finish_list[i] == 0)
+                if(block_finish_list[i] == 1 && block_busy_list[i] == 1) {
+                    block_busy_list[i] = 0;
+                    block_finish_list[i] = 0;
+                }
+                if(block_busy_list[i] == 0)
                 all_block_busy = 0;
                 break;
             }
-            this->tick();
         }
-
+        for(int j = 0; j < input_sig->host_req_wg_id; j++) {
+            if(block_busy_list[(int)input_sig->host_req_wg_id] == 0) {
+                device_->io_host_req_bits_host_wg_id = input_sig->host_req_wg_id;
+                device_->io_host_req_bits_host_num_wf = input_sig->host_req_num_wf;
+                device_->io_host_req_bits_host_wf_size = input_sig->host_req_wf_size;
+                device_->io_host_req_bits_host_start_pc = input_sig->host_req_start_pc;
+                device_->io_host_req_bits_host_vgpr_size_total = input_sig->host_req_vgpr_size_total;
+                device_->io_host_req_bits_host_sgpr_size_total = input_sig->host_req_sgpr_size_total;
+                device_->io_host_req_bits_host_lds_size_total = input_sig->host_req_lds_size_total;
+                device_->io_host_req_bits_host_gds_size_total = input_sig->host_req_gds_size_total;
+                device_->io_host_req_bits_host_vgpr_size_per_wf = input_sig->host_req_vgpr_size_per_wf;
+                device_->io_host_req_bits_host_sgpr_size_per_wf = input_sig->host_req_sgpr_size_per_wf;
+                device_->io_host_req_bits_host_gds_baseaddr = input_sig->host_req_gds_baseaddr;
+                
+                device_->eval();
+                block_busy_list[(int)input_sig->host_req_wg_id] = 1;
+            }
+        }
         this->wait(5);
         
         return exitcode;
@@ -137,10 +159,12 @@ private:
     VVentus *device_; ///< GPGPU
     RAM* ram_; ///< GPGPU的ram
 
+    int block_busy_list [MAX_BLOCK];
     int block_finish_list [MAX_BLOCK];
     typedef struct {
 
     } mem_port_t; ///< GPGPU和ram之间的接口信号
+
 };
 
 
