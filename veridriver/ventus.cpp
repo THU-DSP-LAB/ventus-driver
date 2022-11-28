@@ -38,7 +38,7 @@
 
 //#include <VX_config.h>
 // sim/common
-#include <mem.h>
+#include <vt_memory.h>
 // #include <util.h>
 #include <processor.h>
 

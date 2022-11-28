@@ -16,17 +16,14 @@
 #include "processor.h"
 #include "vt_memory.h"
 #include <future>
+#include <queue>
+#include <vector>
+#include <unordered_map>
 
 using namespace ventus;
 //These macro is defined as test
 #define RAM_SIZE    64
 #define BLOCK_SIZE  64
-#define INSTSIZE64
-#ifdef INSTSIZE64
-    typedef uint64_t inst_len;
-#else
-    typedef uint32_t inst_len;
-#endif
 
 class vt_device {
 public:
@@ -43,14 +40,15 @@ public:
     int free_local_mem(inst_len *dev_maddr);
     int upload(const void *src_data_addr, inst_len dest_addr, uint64_t size, inst_len src_offset);
     int download(void *dest_data_addr, inst_len src_addr, uint64_t size, inst_len dest_offset);
-    int start();
+    int start(host_port_t* input_sig, int num_block);
     int wait(uint64_t time);
 
 
 private:
     Processor processor_;
     ventus::RAM ram_;
-    std::future<void> last_task_;
+    std::future<int> last_task_;
+    std::queue<std::vector<std::unordered_map<int, bool>>> task_by_block_l; ///< queue每个元素对应一个任务，每个任务由多个block组成
 };
 
 class vt_buffer{

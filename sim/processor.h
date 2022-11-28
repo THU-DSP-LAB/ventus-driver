@@ -13,6 +13,8 @@
  * <tr><td>2022-11-16 <td>1.0     <td>yangzexia     <td>创建
  * </table>
  */
+
+#define RUN_DELAY   100 ///< 如果运行新任务时所有block都忙，最长等待时间
 #ifdef INSTSIZE64
     typedef uint64_t inst_len;
 #else
@@ -48,7 +50,7 @@ public:
     void attach_ram(RAM* ram);
     int start(const host_port_t* input_sig );
     int run(host_port_t* input_sig);
-
+    std::queue<int> wait(int cycle);
 private:
 
     class Impl;

@@ -23,11 +23,13 @@
 #include <verilated.h>
 #include <VVentus.h>
 
-#include <mem.h>
+#include <vt_memory.h>
 
 #include <iostream>
 #include <unordered_map>
 #include <list>
+#include <vector>
+#include <queue>
 
 using namespace ventus;
 
@@ -44,6 +46,7 @@ public:
         ram_ = nullptr;
         for(int i = 0; i < MAX_BLOCK; i++) { 
             block_finish_list[i] = 0;
+            block_busy_list[i] = 0;
         }
         this->reset();
     }
@@ -62,35 +65,23 @@ public:
       * @return int 
       */
     int run(host_port_t* input_sig) {
-        int exitcode = 0;
+        int delay = 0;
 
-        /// @todo GPGPU任务完成时返回的信号
-        // while(device_->busy()){
-        //     this->tick();
-        //     exitcode = -1;///< 发生异常返回值
-        // }
-        // int all_block_busy = 1;
-        // while(all_block_busy == 1){
-        //     this->tick();
-        //     block_finish_list[device_->io_host_rsp_bits_inflight_wg_buffer_host_wf_done_wg_id] = device_->io_host_rsp_valid;
-        //     for(int i = 0; i < MAX_BLOCK; i++) {
-        //         if(block_finish_list[i] == 1 && block_busy_list[i] == 1) {
-        //             block_busy_list[i] = 0;
-        //             block_finish_list[i] = 0;
-        //         }
-        //         if(block_busy_list[i] == 0)
-        //         all_block_busy = 0;
-        //         break;
-        //     }
-        // }
-        int all_block_busy = 1;
-        for(int i = 0; i < MAX_BLOCK; i++) {
-            if(block_busy_list[i] == 0)
-            all_block_busy = 0;
-            block_busy_list[i] = 1;
+        while(delay < RUN_DELAY) {
+            if(all_block_busy()) {
+                this->tick();
+                delay++;
+            } else 
+                break;
         }
-            if(block_busy_list[(int)input_sig->host_req_wg_id] == 0) {
-                device_->io_host_req_bits_host_wg_id = input_sig->host_req_wg_id;
+        // 经过最大等待时间仍然没有空闲block
+        if(delay == RUN_DELAY)
+            return -1;
+
+        for(int i = 0; i < MAX_BLOCK; i++) {
+            if(block_busy_list[i] == 0) {
+                
+                device_->io_host_req_bits_host_wg_id = (inst_len)(i);
                 device_->io_host_req_bits_host_num_wf = input_sig->host_req_num_wf;
                 device_->io_host_req_bits_host_wf_size = input_sig->host_req_wf_size;
                 device_->io_host_req_bits_host_start_pc = input_sig->host_req_start_pc;
@@ -103,26 +94,26 @@ public:
                 device_->io_host_req_bits_host_gds_baseaddr = input_sig->host_req_gds_baseaddr;
                 
                 device_->eval();
-                block_busy_list[(int)input_sig->host_req_wg_id] = 1;
+                block_busy_list[i] = 1;
+                return i;// 返回该block在GPGPU中运行实际对应的标号
             }
-
-        
-        return exitcode;
+        }
     }
     /// @todo 打印ram访问请求的函数
     void cout_flush(){
 
     }
-    /**
-     * @brief   GPGPU启动前复位  
-     * @return int 
-     */
-    void start(const host_port_t* input_sig) {
-        int exitcode = 0;
-        this->reset();
-        ///配置寄存器的操作
+
+    // /**
+    //  * @brief   GPGPU启动前复位  
+    //  * @return int 
+    //  */
+    // void start(const host_port_t* input_sig) {
+    //     int exitcode = 0;
+    //     this->reset();
+    //     ///配置寄存器的操作
         
-    }
+    // }
 
 private:
     void reset(){
@@ -137,7 +128,9 @@ private:
         
         //this->cout_flush();
     }
-
+    /**
+     * @brief verilator运行一个周期并评估模型，更新busy和finish两个数组
+     */
     void tick(){
         device_->clock = 0;
         this->eval();
@@ -148,9 +141,11 @@ private:
         if(device_->io_host_rsp_valid)
             block_finish_list[device_->io_host_rsp_bits_inflight_wg_buffer_host_wf_done_wg_id] = 1;
         for(int i = 0; i < MAX_BLOCK; i++) {
+            // 如果任务已经完成，则释放该block
             if(block_finish_list[i] == 1 && block_busy_list[i] == 1) {
                 block_busy_list[i] = 0;
                 block_finish_list[i] = 0;
+                finished_block_queue.push(block_finish_list[i]);
             }
         }
         /// @todo ram的tick实现
@@ -159,20 +154,49 @@ private:
     void eval(){
         device_->eval();
     }
-
-    void wait(int cycle){
+    /**
+     * @brief 等待cycle个周期，如果所有任务提前完成，则提前返回
+     * @param  cycle    等待的周期数
+     */
+public:
+    std::queue<int> wait(int cycle){
         for(int i = 0; i < cycle; i++){
-            int all_idle = 0;
+            int all_idle = 1;
             for(int j = 0; j < MAX_BLOCK; j++) {
                 if(block_busy_list[j] == 1) {
-                    all_idle = 1;
+                    all_idle = 0;
                     break;
                 }
             }
             if(all_idle)
                 return;
             this->tick();
+            std::queue<int> tmp = finished_block_queue;
+            for(int i = 0; i < finished_block_queue.size(); i++)
+                finished_block_queue.pop();
+            return tmp;
         }
+    }
+    /**
+     * @brief 是否所有block都分配了任务
+     * @return true 所有block都在忙
+     * @return false 有block空闲
+     */
+    bool all_block_busy() {
+        bool all_busy_flag = 1;
+        for(int i = 0; i < MAX_BLOCK; i++) {
+            if(block_busy_list[i] = 0)
+                all_busy_flag = 0;
+        }
+        return all_busy_flag;
+    }
+    /**
+     * @brief 返回已完成的block的ID
+     * @return int 
+     */
+    int finished_block(){
+        if(!finished_block_queue.empty())
+            finished_block_queue.pop();
     }
     
 
@@ -182,6 +206,8 @@ private:
 
     int block_busy_list [MAX_BLOCK];
     int block_finish_list [MAX_BLOCK];
+    std::vector<int> block_one_task [MAX_BLOCK];
+    std::queue<int> finished_block_queue;
     typedef struct {
 
     } mem_port_t; ///< GPGPU和ram之间的接口信号
@@ -203,6 +229,6 @@ void Processor::attach_ram(RAM* mem) {
 int Processor::run(host_port_t* input_sig) {
     return impl_->run(input_sig);
 }
-int Processor::start(const host_port_t* input_sig) {
-    return impl_->start(input_sig);
+int Processor::wait(int cycle) {
+    return impl_->wait(cycle);
 }
