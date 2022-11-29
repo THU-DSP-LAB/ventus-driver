@@ -1,4 +1,4 @@
-verilator/*
+/verilator/
 obj_dir/*
 .vscode/*
 main.exe
