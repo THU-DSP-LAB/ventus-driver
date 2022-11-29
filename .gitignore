@@ -4,3 +4,5 @@ obj_dir/*
 main.exe
 a.exe
 test.cpp
+test.out
+test

@@ -159,7 +159,7 @@ private:
      * @param  cycle    等待的周期数
      */
 public:
-    std::queue<int> wait(int cycle){
+    std::queue<int> wait(uint64_t cycle){
         for(int i = 0; i < cycle; i++){
             int all_idle = 1;
             for(int j = 0; j < MAX_BLOCK; j++) {
@@ -168,14 +168,14 @@ public:
                     break;
                 }
             }
-            if(all_idle)
-                return;
+            if(all_idle) 
+                break;
             this->tick();
-            std::queue<int> tmp = finished_block_queue;
-            for(int i = 0; i < finished_block_queue.size(); i++)
-                finished_block_queue.pop();
-            return tmp;
         }
+        std::queue<int> tmp = finished_block_queue;
+        for(int i = 0; i < finished_block_queue.size(); i++)
+            finished_block_queue.pop();
+        return tmp;
     }
     /**
      * @brief 是否所有block都分配了任务
@@ -229,6 +229,6 @@ void Processor::attach_ram(RAM* mem) {
 int Processor::run(host_port_t* input_sig) {
     return impl_->run(input_sig);
 }
-int Processor::wait(int cycle) {
+int Processor::wait(uint64_t cycle) {
     return impl_->wait(cycle);
 }

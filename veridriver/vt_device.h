@@ -16,11 +16,13 @@
 #include "processor.h"
 #include "vt_memory.h"
 #include <future>
+#include <list>
 #include <queue>
 #include <vector>
 #include <unordered_map>
 
 using namespace ventus;
+using namespace std;
 //These macro is defined as test
 #define RAM_SIZE    64
 #define BLOCK_SIZE  64
@@ -31,6 +33,7 @@ public:
         :ram_(RAM_SIZE),
          processor_(){
             processor_.attach_ram(&ram_);
+            list<unordered_map<int, bool>> task_by_block_l;
         }
     ~vt_device(){
         if(last_task_.valid())
@@ -46,9 +49,9 @@ public:
 
 private:
     Processor processor_;
-    ventus::RAM ram_;
-    std::future<int> last_task_;
-    std::queue<std::vector<std::unordered_map<int, bool>>> task_by_block_l; ///< queue每个元素对应一个任务，每个任务由多个block组成
+    RAM ram_;
+    future<int> last_task_;
+    list<unordered_map<int, bool>> task_by_block_l; ///< list每个元素对应一个任务，每个任务由多个block组成
 };
 
 class vt_buffer{
