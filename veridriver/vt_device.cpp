@@ -69,8 +69,10 @@ int vt_device::wait(uint64_t time){
     std::queue<int> finished_block = processor_.wait(time);
     while(!finished_block.empty()) {
         for(auto& it : task_by_block_l) {
-                if(it.find(finished_block.front()) == it.end())
-                task_by_block_l.front().back()[finished_block.front()] = true;
+                if(it.find(finished_block.front()) != it.end()) {
+                    task_by_block_l.front()[finished_block.front()] = true;
+                    finished_block.pop();
+                }
         finished_block.pop();
         }
     }
