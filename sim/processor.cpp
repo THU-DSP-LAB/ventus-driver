@@ -202,11 +202,10 @@ public:
 
 private:
     VVentus *device_; ///< GPGPU
-    RAM* ram_; ///< GPGPU的ram
+    RAM *ram_; ///< GPGPU的ram
 
-    int block_busy_list [MAX_BLOCK];
-    int block_finish_list [MAX_BLOCK];
-    std::vector<int> block_one_task [MAX_BLOCK];
+    int block_busy_list[MAX_BLOCK];
+    int block_finish_list[MAX_BLOCK];
     std::queue<int> finished_block_queue;
     typedef struct {
 

@@ -43,50 +43,50 @@ typedef void* vt_buffer_h;
 
 #define MAX_TIMEOUT               (60*60*1000)   // 1hr 
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// open the device and connect to it
 int vt_dev_open(vt_device_h* hdevice);
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// Close the device when all the operations are done
 int vt_dev_close(vt_device_h hdevice);
 
 /// return device configurations
 int vt_dev_caps(vt_device_h* hdevice, uint32_t caps_id, uint64_t *value);
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// Allocate shared buffer with device
 int vt_buf_alloc(vt_device_h hdevice, uint64_t size, vt_buffer_h* hbuffer);
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// release buffer
 int vt_buf_free(vt_buffer_h hbuffer);
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// Get host pointer address  
 void* vt_host_ptr(vt_buffer_h hbuffer);
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// allocate device memory and return address
 int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_maddr);
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// release device memory
 int vt_mem_free(vt_device_h hdevice, uint64_t dev_maddr);
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// Copy bytes from buffer to device local memory
 int vt_copy_to_dev(vt_buffer_h hbuffer, uint64_t dev_maddr, uint64_t size, uint64_t src_offset);
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// Copy bytes from device local memory to buffer
 int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_maddr, uint64_t size, uint64_t dst_offset);
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// Start device execution
 int vt_start(vt_device_h hdevice);
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// Wait for device ready with milliseconds timeout
 int vt_ready_wait(vt_device_h hdevice, uint64_t timeout);
 
@@ -95,7 +95,7 @@ int vt_ready_wait(vt_device_h hdevice, uint64_t timeout);
 /// upload kernel bytes to device
 int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t size);
 
-//NEED TO DEFINE
+/// NEED TO DEFINE
 /// upload kernel file to device
 int vt_upload_kernel_file(vt_device_h device, const char* filename);
 
