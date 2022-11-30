@@ -27,9 +27,10 @@ int vt_device::download(void *dest_data_addr, inst_len src_addr, uint64_t size, 
 }
 /**
  * @brief   发送任务，每个任务由多个block组成，每次调用run发送一个任务
- * 传入到硬件的wg_id由processor.run()决定，函数执行完成后会返回实际的wg_id
- * 每次发送一个任务会在list中增加一个向量，向量的长度为该任务所分成的block的数量，
- * 每个向量的元素为一个map，map的key为block ID，value表示该block是否执行完成。
+ * 传入到硬件的wg_id由processor.run()决定，函数执行完成后会返回实际的wg_id,
+ * 任务队列的数据结构为一个元素为unordered_map的list，list的每个元素代表一个任务，
+ * 每次发送一个任务会在list中增加一个元素
+ * unordered_map的每个key代表block ID，value表示该block是否执行完成。
  * @param input_sig 输入到GPGPU的信号，与硬件接口对应
  * @param num_block 这个任务由多少个块组成
  * @return int 0
@@ -67,24 +68,27 @@ int vt_device::wait(uint64_t time){
         }
     }
     std::queue<int> finished_block = processor_.wait(time);
+    // 根据GPGPU返回的block完成情况更新任务队列，将已完成的block ID与保存的list中的block ID比较
     while(!finished_block.empty()) {
-        for(auto& it : task_by_block_l) {
-                if(it.find(finished_block.front()) != it.end()) {
-                    task_by_block_l.front()[finished_block.front()] = true;
+        for(auto it=task_by_block_l.begin();it != task_by_block_l.end(); it++) {
+                if(it->find(finished_block.front()) != it->end()) {
+                    (*it)[finished_block.front()] = true;
                     finished_block.pop();
                 }
-        finished_block.pop();
+            finished_block.pop();
+            // 如果一个任务的所有block都完成，则将该任务pop掉，
+                bool task_all_block_finished = true;
+                for(auto& it_map : *it) {
+                    if(it_map.second == false) {
+                        task_all_block_finished = false;
+                        break;
+                    }
+                }
+                if(task_all_block_finished == true) {
+                    it = task_by_block_l.erase(it);
+                }
         }
     }
-    bool task_finished = true;
-    for(auto& it : task_by_block_l.front().back()) {
-        if(it.second == false) {
-            task_finished = false;
-            break;
-        }
-    }
-    if(task_finished == true)
-        task_by_block_l.pop();
     return 0;
 }
 

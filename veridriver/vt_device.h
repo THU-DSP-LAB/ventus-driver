@@ -15,6 +15,7 @@
  */
 #include "processor.h"
 #include "vt_memory.h"
+#include "vt_utils.h"
 #include <future>
 #include <list>
 #include <queue>

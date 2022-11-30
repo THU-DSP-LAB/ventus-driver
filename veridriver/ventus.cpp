@@ -59,12 +59,17 @@ extern int vt_dev_close(vt_device_h hdevice){
     if(hdevice == nullptr);
         return -1;
     vt_device* device = (vt_device*) hdevice;
-
     delete device;
+
+    return 0;
 }
 extern int vt_dev_caps(vt_device_h* hdevice, host_port_t* input_sig){
-    if(hdevice == nullptr)
-        return -1;
-    vt_device* device = (vt_device*) hdevice;
+    // if(hdevice == nullptr)
+    //     return -1;
+    // vt_device* device = (vt_device*) hdevice;
 
+    return -1;
+}
+extern int vt_buf_alloc(vt_device_h hdevice, uint64_t size, vt_buffer_h* hbuffer) {
+        
 }

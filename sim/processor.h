@@ -50,7 +50,7 @@ public:
     void attach_ram(RAM* ram);
     int start(const host_port_t* input_sig );
     int run(host_port_t* input_sig);
-    std::queue<int> wait(int cycle);
+    std::queue<int> wait(uint64_t cycle);
 private:
 
     class Impl;

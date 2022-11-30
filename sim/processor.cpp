@@ -229,6 +229,6 @@ void Processor::attach_ram(RAM* mem) {
 int Processor::run(host_port_t* input_sig) {
     return impl_->run(input_sig);
 }
-int Processor::wait(uint64_t cycle) {
+std::queue<int> Processor::wait(uint64_t cycle) {
     return impl_->wait(cycle);
 }
