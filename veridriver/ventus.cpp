@@ -71,5 +71,33 @@ extern int vt_dev_caps(vt_device_h* hdevice, host_port_t* input_sig){
     return -1;
 }
 extern int vt_buf_alloc(vt_device_h hdevice, uint64_t size, vt_buffer_h* hbuffer) {
-        
+    if(hbuffer == nullptr || size <= 0 || hdevice == nullptr) 
+        return -1;
+    vt_device *device = ((vt_device*) hdevice);
+
+    auto buffer = new vt_buffer(size, device);
+    if(buffer->data() == nullptr) {
+        delete buffer;
+        return -1;
+    }
+    *hbuffer = buffer;
+    return 0;
+}
+extern int vt_buf_free(vt_buffer_h hbuffer) {
+    if(hbuffer == nullptr)
+        return -1;
+    vt_buffer *buffer = ((vt_buffer*)hbuffer);
+    delete buffer;
+    return 0;
+}
+extern void* vt_host_ptr(vt_buffer_h hbuffer) {
+    if (nullptr == hbuffer)
+        return nullptr;
+
+    vt_buffer* buffer = ((vt_buffer*)hbuffer);
+
+    return buffer->data();
+}
+extern int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_maddr) {
+    
 }
