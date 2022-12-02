@@ -55,7 +55,7 @@ public:
 
     }
 
-    void attach_ram(RAM* ram) {
+    void attach_ram(Memory* ram) {
         ram_ = ram;
     }
      /**
@@ -202,7 +202,7 @@ public:
 
 private:
     VVentus *device_; ///< GPGPU
-    RAM *ram_; ///< GPGPU的ram
+    Memory *ram_; ///< GPGPU的ram
 
     int block_busy_list[MAX_BLOCK];
     int block_finish_list[MAX_BLOCK];
@@ -221,7 +221,7 @@ Processor::Processor()
 Processor::~Processor(){
     delete impl_;
 }
-void Processor::attach_ram(RAM* mem) {
+void Processor::attach_ram(Memory* mem) {
     impl_->attach_ram(mem);
 }
 

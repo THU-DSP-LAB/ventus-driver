@@ -1,22 +1,30 @@
 #include "vt_device.h"
 #include <stdlib.h>
 #include "vt_utils.h"
+#include "MemConfig.h"
 
 
 
 int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr){
-    return ram_.allocate(size, dev_addr);
+    if(size <= 0) 
+        return -1;
+    inst_len rootPage = ram_.createRootPageTable();
+    *dev_addr = rootPage;
+    ram_.allocateMemory(rootPage, 0000ull, size);
+    return 0;
 }
+
 int vt_device::free_local_mem(inst_len *dev_addr){
-    return ram_.release(dev_addr);
+    return ram_.cleanTask(*dev_addr);
 }
-int vt_device::upload(const void *src_data_addr, inst_len dest_addr, uint64_t size, inst_len src_offset){
+
+int vt_device::upload(inst_len *root, inst_len dest_addr, uint64_t size, inst_len src_offset){
     uint64_t asize = aligned_size(size, BLOCK_SIZE);
     // 大于要写入的部分大于一个块的大小
     if(dest_addr + asize > -1){
         
     }
-    ram_.write(src_data_addr + src_offset, dest_addr, asize);
+    ram_.writeDataVirtual(*src_data_addr + src_offset, dest_addr, asize);
 
 }
 

@@ -98,6 +98,13 @@ extern void* vt_host_ptr(vt_buffer_h hbuffer) {
 
     return buffer->data();
 }
+/**
+ * @brief  为设备分配内存，返回根页表的地址
+ * @param  hdevice           
+ * @param  size              
+ * @param  dev_maddr         
+ * @return int 
+ */
 extern int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_maddr) {
     
 }

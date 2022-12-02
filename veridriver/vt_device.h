@@ -14,7 +14,7 @@
  * </table>
  */
 #include "processor.h"
-#include "vt_memory.h"
+#include "controller.cpp"
 #include "vt_utils.h"
 #include <future>
 #include <list>
@@ -25,13 +25,13 @@
 using namespace ventus;
 using namespace std;
 //These macro is defined as test
-#define RAM_SIZE    64
+
 #define BLOCK_SIZE  64
 
 class vt_device {
 public:
     vt_device()
-        :ram_(RAM_SIZE),
+        :ram_(RAM_RANGE),
          processor_(){
             processor_.attach_ram(&ram_);
             list<unordered_map<int, bool>> task_by_block_l;
@@ -40,9 +40,28 @@ public:
         if(last_task_.valid())
             last_task_.wait();
     }
+    /**
+     * @brief 为GPU分配内存空间，返回指向根页表的指针
+     * @param  size              
+     * @param  dev_maddr         
+     * @return int 
+     */
     int alloc_local_mem(inst_len size, inst_len *dev_maddr);
+    /**
+     * @brief 释放分配的空间，释放根页表所指向的空间
+     * @param  dev_maddr    指向根页表的指针   
+     * @return int 
+     */
     int free_local_mem(inst_len *dev_maddr);
-    int upload(const void *src_data_addr, inst_len dest_addr, uint64_t size, inst_len src_offset);
+    /**
+     * @brief 将buffer写入到分配给GPU的memory中
+     * @param  src_data_addr     
+     * @param  dest_addr         GPU的memory，虚拟地址
+     * @param  size              大小
+     * @param  src_offset        
+     * @return int 
+     */
+    int upload(inst_len *root, inst_len dest_addr, uint64_t size, inst_len src_offset);
     int download(void *dest_data_addr, inst_len src_addr, uint64_t size, inst_len dest_offset);
     int start(host_port_t* input_sig, int num_block);
     int wait(uint64_t time);
@@ -50,7 +69,7 @@ public:
 
 private:
     Processor processor_;
-    RAM ram_;
+    Memory ram_;
     future<int> last_task_;
     list<unordered_map<int, bool>> task_by_block_l; ///< list每个元素对应一个任务，每个任务由多个block组成
 };

@@ -13,6 +13,9 @@
  * <tr><td>2022-11-16 <td>1.0     <td>yangzexia     <td>创建
  * </table>
  */
+#include <cstdint>
+#include <queue>
+#include "vt_memory.h"
 
 #define RUN_DELAY   100 ///< 如果运行新任务时所有block都忙，最长等待时间
 #ifdef INSTSIZE64
@@ -40,14 +43,14 @@ typedef struct {
     bool host_rsp_ready;
 } host_port_t;///< GPGPU和主机之间进行配置参数传递的接口
 
-class RAM;
+// class Memory;
 
 class Processor{
 public:
     Processor();
     ~Processor();
 
-    void attach_ram(RAM* ram);
+    void attach_ram(Memory* ram);
     int start(const host_port_t* input_sig );
     int run(host_port_t* input_sig);
     std::queue<int> wait(uint64_t cycle);
