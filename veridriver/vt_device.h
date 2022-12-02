@@ -35,6 +35,7 @@ public:
          processor_(){
             processor_.attach_ram(&ram_);
             list<unordered_map<int, bool>> task_by_block_l;
+            rootPage = -1;
         }
     ~vt_device(){
         if(last_task_.valid())
@@ -58,11 +59,28 @@ public:
      * @param  src_data_addr     
      * @param  dest_addr         GPU的memory，虚拟地址
      * @param  size              大小
-     * @param  src_offset        
+     * @param  src_offset        偏移量
      * @return int 
      */
-    int upload(inst_len *root, inst_len dest_addr, uint64_t size, inst_len src_offset);
-    int download(void *dest_data_addr, inst_len src_addr, uint64_t size, inst_len dest_offset);
+    int upload( inst_len *root, 
+                inst_len dest_addr, 
+                uint64_t size, 
+                inst_len src_offset,
+                uint64_t *data
+            );
+    /**
+     * @brief 
+     * @param  dest_data_addr    要读取的数据地址，虚拟地址
+     * @param  src_addr          读出后要放置的位置
+     * @param  size              大小
+     * @param  dest_offset       偏移量
+     * @return int 
+     */
+    int download(   uint64_t *root, 
+                    void *src_addr, 
+                    uint64_t size, 
+                    uint64_t dest_offset
+                );
     int start(host_port_t* input_sig, int num_block);
     int wait(uint64_t time);
 
@@ -72,6 +90,7 @@ private:
     Memory ram_;
     future<int> last_task_;
     list<unordered_map<int, bool>> task_by_block_l; ///< list每个元素对应一个任务，每个任务由多个block组成
+    // uint64_t rootPage; ///< 根页表
 };
 
 class vt_buffer{

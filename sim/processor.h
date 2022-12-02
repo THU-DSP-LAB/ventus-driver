@@ -18,6 +18,7 @@
 #include "vt_memory.h"
 
 #define RUN_DELAY   100 ///< 如果运行新任务时所有block都忙，最长等待时间
+#define INSTSIZE64
 #ifdef INSTSIZE64
     typedef uint64_t inst_len;
 #else
