@@ -20,14 +20,13 @@ int vt_device::free_local_mem(inst_len *dev_addr){
 
 int vt_device::upload(inst_len *root, inst_len dest_addr, uint64_t size, inst_len src_offset, uint64_t *data){
     
-    ram_.writeDataVirtual(*root, dest_addr + src_offset, size, data);
+    ram_.writeDataVirtual(*root, dest_addr+RODATA_BASE+src_offset, size, data);
 
 }
 
-int vt_device::download(void *dest_data_addr, inst_len src_addr, uint64_t size, inst_len dest_offset){
-    uint64_t asize = aligned_size(size, BLOCK_SIZE);
+int vt_device::download(uint64_t *root, uint64_t dest_data_addr, void *src_addr, uint64_t size, inst_len dest_offset){
 
-    ram_.readDataVirtual(dest_data_addr + dest_offset, src_addr, asize);
+    ram_.readDataVirtual(*root, dest_data_addr+GLOBALMEM_BASE+dest_offset, size, src_addr);
 }
 /**
  * @brief   发送任务，每个任务由多个block组成，每次调用run发送一个任务

@@ -56,7 +56,7 @@ public:
     int free_local_mem(inst_len *dev_maddr);
     /**
      * @brief 将buffer写入到分配给GPU的memory中
-     * @param  src_data_addr     
+     * @param  root              根页表     
      * @param  dest_addr         GPU的memory，虚拟地址
      * @param  size              大小
      * @param  src_offset        偏移量
@@ -70,6 +70,7 @@ public:
             );
     /**
      * @brief 
+     * @param  root              根页表
      * @param  dest_data_addr    要读取的数据地址，虚拟地址
      * @param  src_addr          读出后要放置的位置
      * @param  size              大小
@@ -77,6 +78,7 @@ public:
      * @return int 
      */
     int download(   uint64_t *root, 
+                    uint64_t dest_data_addr,
                     void *src_addr, 
                     uint64_t size, 
                     uint64_t dest_offset
