@@ -5,28 +5,33 @@
 
 
 
-int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr){
-    if(size <= 0) 
+int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr, uint64_t *root){
+    if(size <= 0 || dev_addr == nullptr) 
         return -1;
-    uint64_t rootPage = ram_.createRootPageTable();
-    *dev_addr = rootPage;
-    ram_.allocateMemory(rootPage, 0000ull, size);
+    if(root == nullptr) {
+        uint64_t rootPage = ram_.createRootPageTable();
+        *(this->root) = rootPage;
+    }
+    // 为device申请物理空间
+    return ram_.allocateMemory(*(this->root), *dev_addr, size) == 0 ? 0 : -1;
+
+}
+
+int vt_device::free_local_mem(inst_len *root){ 
+    ram_.cleanTask(*root);
+    root = nullptr;
     return 0;
 }
 
-int vt_device::free_local_mem(inst_len *dev_addr){
-    return ram_.cleanTask(*dev_addr);
-}
-
-int vt_device::upload(inst_len *root, inst_len dest_addr, uint64_t size, inst_len src_offset, uint64_t *data){
+int vt_device::upload(inst_len *root, inst_len dest_addr, uint64_t size, void *data){
     
-    ram_.writeDataVirtual(*root, dest_addr+RODATA_BASE+src_offset, size, data);
+    ram_.writeDataVirtual(*(this->root), dest_addr+RODATA_BASE, size, data);
 
 }
 
-int vt_device::download(uint64_t *root, uint64_t dest_data_addr, void *src_addr, uint64_t size, inst_len dest_offset){
+int vt_device::download(uint64_t *root, uint64_t dest_data_addr, void *src_addr, uint64_t size){
 
-    ram_.readDataVirtual(*root, dest_data_addr+GLOBALMEM_BASE+dest_offset, size, src_addr);
+    ram_.readDataVirtual(*(this->root), dest_data_addr+GLOBALMEM_BASE, size, src_addr);
 }
 /**
  * @brief   发送任务，每个任务由多个block组成，每次调用run发送一个任务
@@ -38,7 +43,7 @@ int vt_device::download(uint64_t *root, uint64_t dest_data_addr, void *src_addr,
  * @param num_block 这个任务由多少个块组成
  * @return int 0
  */
-int vt_device::start(host_port_t* input_sig, int num_block){
+int vt_device::start(int num_block){
     // host_port_t* input_per_block;
     // *input_per_block = *input_sig;
     task_by_block_l.push_back(unordered_map<int, bool>());

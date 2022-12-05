@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <iostream>
+#include <fstream>
 #include <future>
 #include <list>
 #include <chrono>
@@ -36,7 +37,7 @@
 // #include <vt_malloc.h> 
 #include <vt_utils.h>
 
-//#include <VX_config.h>
+//#include <VT_config.h>
 // sim/common
 #include <vt_memory.h>
 // #include <util.h>
@@ -102,9 +103,125 @@ extern void* vt_host_ptr(vt_buffer_h hbuffer) {
  * @brief  为设备分配内存，返回根页表的地址
  * @param  hdevice           
  * @param  size              
- * @param  dev_maddr         
+ * @param  dev_vaddr    申请物理地址时的虚拟地址         
  * @return int 
  */
-extern int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_maddr) {
+extern int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_vaddr) {
+    if( hdevice == nullptr || size <= 0 )
+        return -1;
+    vt_device *device = (vt_device*) hdevice;
+    return device->alloc_local_mem(size, dev_vaddr, 0);
+
+}
+
+extern int vt_mem_free(vt_device_h hdevice, uint64_t dev_vaddr) {
+    if(hdevice == nullptr) 
+        return -1;
+    vt_device *device = (vt_device*) hdevice;
+    return device->free_local_mem(0);
+}
+
+extern int vt_copy_to_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size) {
+    if(hbuffer == nullptr || size <= 0)
+        return -1;
+    auto buffer = (vt_buffer*) hbuffer;
+    return buffer->device()->upload(0, dev_vaddr, size, buffer->data());
+}
+
+extern int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size) {
+    if(hbuffer == nullptr || size <= 0)
+        return -1;
+    auto buffer = (vt_buffer*) hbuffer;
+    return buffer->device()->download(0, dev_vaddr, buffer->data(), size);
+}
+
+extern int vt_start(vt_device_h hdevice) {
+    if(hdevice == nullptr)
+        return -1;
+    auto device = (vt_device *) hdevice;
+    device->start();
+    return 0;
+}
+extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
+    if(hdevice == nullptr)
+        return -1;
+    vt_device* device = (vt_device*) hdevice;
+    return device->wait(timeout);
+}
+
+extern int vt_upload_kernel_file(vt_device_h hdevice, const char* filename) {
+    if(hdevice == nullptr)
+        return -1;
     
+}
+extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t size) {
+  int err = 0;
+
+  if (NULL == content || 0 == size)
+    return -1;
+
+  uint32_t buffer_transfer_size = 65536; // 64 KB
+  uint64_t kernel_base_addr;
+  err = vt_dev_caps(device, VT_CAPS_KERNEL_BASE_ADDR, &kernel_base_addr);
+  if (err != 0)
+    return -1;
+
+  // allocate device buffer
+  vt_buffer_h buffer;
+  err = vt_buf_alloc(device, buffer_transfer_size, &buffer);
+  if (err != 0)
+    return -1; 
+
+  // get buffer address
+  auto buf_ptr = (uint8_t*)vt_host_ptr(buffer);
+
+  //
+  // upload content
+  //
+
+  uint64_t offset = 0;
+  while (offset < size) {
+    auto chunk_size = std::min<uint64_t>(buffer_transfer_size, size - offset);
+    std::memcpy(buf_ptr, (uint8_t*)content + offset, chunk_size);
+
+    /*printf("***  Upload Kernel to 0x%0x: data=", kernel_base_addr + offset);
+    for (int i = 0, n = ((chunk_size+7)/8); i < n; ++i) {
+      printf("%08x", ((uint64_t*)((uint8_t*)content + offset))[n-1-i]);
+    }
+    printf("\n");*/
+
+    err = vt_copy_to_dev(buffer, kernel_base_addr + offset, chunk_size, 0);
+    if (err != 0) {
+      vt_buf_free(buffer);
+      return err;
+    }
+    offset += chunk_size;
+  }
+
+  vt_buf_free(buffer);
+
+  return 0;
+}
+
+extern int vt_upload_kernel_file(vt_device_h device, const char* filename) {
+  std::ifstream ifs(filename);
+  if (!ifs) {
+    std::cout << "error: " << filename << " not found" << std::endl;
+    return -1;
+  }
+
+  // read file content
+  ifs.seekg(0, ifs.end);
+  auto size = ifs.tellg();
+  auto content = new char [size];   
+  ifs.seekg(0, ifs.beg);
+  ifs.read(content, size);
+
+  // upload
+  int err = vt_upload_kernel_bytes(device, content, size);
+
+  // release buffer
+  delete[] content;
+
+  return err;
 }

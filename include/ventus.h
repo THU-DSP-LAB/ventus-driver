@@ -68,19 +68,19 @@ void* vt_host_ptr(vt_buffer_h hbuffer);
 
 /// NEED TO DEFINE
 /// allocate device memory and return address
-int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_maddr);
+int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_vaddr);
 
 /// NEED TO DEFINE
 /// release device memory
-int vt_mem_free(vt_device_h hdevice, uint64_t dev_maddr);
+int vt_mem_free(vt_device_h hdevice, uint64_t dev_vaddr);
 
 /// NEED TO DEFINE
 /// Copy bytes from buffer to device local memory
-int vt_copy_to_dev(vt_buffer_h hbuffer, uint64_t dev_maddr, uint64_t size, uint64_t src_offset);
+int vt_copy_to_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size);
 
 /// NEED TO DEFINE
 /// Copy bytes from device local memory to buffer
-int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_maddr, uint64_t size, uint64_t dst_offset);
+int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size);
 
 /// NEED TO DEFINE
 /// Start device execution
