@@ -21,6 +21,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <cstring>
 #include <stdlib.h>
 #include <assert.h>
 #include <iostream>
@@ -149,18 +150,13 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     return device->wait(timeout);
 }
 
-extern int vt_upload_kernel_file(vt_device_h hdevice, const char* filename) {
-    if(hdevice == nullptr)
-        return -1;
-    
-}
 extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t size) {
   int err = 0;
 
   if (NULL == content || 0 == size)
     return -1;
 
-  uint32_t buffer_transfer_size = 65536; // 64 KB
+  uint32_t buffer_transfer_size = 65536; ///< 64 KB
   uint64_t kernel_base_addr;
   err = vt_dev_caps(device, VT_CAPS_KERNEL_BASE_ADDR, &kernel_base_addr);
   if (err != 0)
@@ -190,7 +186,7 @@ extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint6
     }
     printf("\n");*/
 
-    err = vt_copy_to_dev(buffer, kernel_base_addr + offset, chunk_size, 0);
+    err = vt_copy_to_dev(buffer, kernel_base_addr + offset, chunk_size);
     if (err != 0) {
       vt_buf_free(buffer);
       return err;

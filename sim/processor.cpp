@@ -19,11 +19,13 @@
 
 #include "processor.h"
 #include "vt_utils.h"
+#include "vt_config.h"
 
 #include <verilated.h>
 #include <VVentus.h>
 
-#include <vt_memory.h>
+#include "vt_memory.h"
+#include "controller.cpp"
 
 #include <iostream>
 #include <unordered_map>
@@ -41,7 +43,7 @@ using namespace ventus;
  */
 class Processor::Impl{
 public:
-    Impl() {
+    Impl():mem_ctrl(NUM_THREAD) {
         device_ = new VVentus();
         ram_ = nullptr;
         for(int i = 0; i < MAX_BLOCK; i++) { 
@@ -52,7 +54,7 @@ public:
     }
     ~Impl(){
         delete device_;
-
+        mem_ctrl.~Controller();
     }
 
     void attach_ram(Memory* ram) {
@@ -93,7 +95,7 @@ public:
                 device_->io_host_req_bits_host_sgpr_size_per_wf = input_sig->host_req_sgpr_size_per_wf;
                 device_->io_host_req_bits_host_gds_baseaddr = input_sig->host_req_gds_baseaddr;
                 
-                device_->eval();
+                this->tick();
                 block_busy_list[i] = 1;
                 return i;// 返回该block在GPGPU中运行实际对应的标号
             }
@@ -104,20 +106,10 @@ public:
 
     }
 
-    // /**
-    //  * @brief   GPGPU启动前复位  
-    //  * @return int 
-    //  */
-    // void start(const host_port_t* input_sig) {
-    //     int exitcode = 0;
-    //     this->reset();
-    //     ///配置寄存器的操作
-        
-    // }
-
 private:
     void reset(){
         device_->reset = 1;
+        mem_ctrl.controller_reset();
         for(int i = 0; i < RESET_DELAY; i++){
             device_->clock = 0;
             device_->eval();
@@ -132,11 +124,17 @@ private:
      * @brief verilator运行一个周期并评估模型，更新busy和finish两个数组
      */
     void tick(){
+        /// @todo: 读取TLB_A和TLB_D的值并接到GPGPU
+        {
+            device_->TLBundleD = mem_ctrl.rsp;
+            mem_ctrl.req = device_->TLBundleA;
+        }
+        //给GPGPU和内存控制器的时钟赋值并实例化。
         device_->clock = 0;
-        this->eval();
-
+        this->eval(device_->clock);
         device_->clock = 1;
-        this->eval();
+        this->eval(device_->clock);
+
         // 每个周期读取GPGPU的输出
         if(device_->io_host_rsp_valid)
             block_finish_list[device_->io_host_rsp_bits_inflight_wg_buffer_host_wf_done_wg_id] = 1;
@@ -151,8 +149,9 @@ private:
         /// @todo ram的tick实现
     }
 
-    void eval(){
+    void eval(int clk){
         device_->eval();
+        mem_ctrl.controller_eval(clk, ram_);
     }
     /**
      * @brief 等待cycle个周期，如果所有任务提前完成，则提前返回
@@ -207,9 +206,9 @@ private:
     int block_busy_list[MAX_BLOCK];
     int block_finish_list[MAX_BLOCK];
     std::queue<int> finished_block_queue;
-    typedef struct {
-
-    } mem_port_t; ///< GPGPU和ram之间的接口信号
+    TLBundleA TLBreqA;
+    TLBundleD TLBrspD;///< GPGPU和ram之间的接口信号
+    Controller mem_ctrl;
 
 };
 

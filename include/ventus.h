@@ -91,7 +91,7 @@ int vt_start(vt_device_h hdevice);
 int vt_ready_wait(vt_device_h hdevice, uint64_t timeout);
 
 ////////////////////////////// UTILITY FUNCIONS ///////////////////////////////
-
+/// NEED TO DEFINE
 /// upload kernel bytes to device
 int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t size);
 
