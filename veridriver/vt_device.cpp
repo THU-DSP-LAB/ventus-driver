@@ -5,33 +5,37 @@
 
 
 
-int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr, uint64_t *root){
-    if(size <= 0 || dev_addr == nullptr) 
+int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr, int taskID){
+    if(size <= 0 || dev_addr == nullptr || taskID > roots.size()) 
         return -1;
-    if(root == nullptr) {
+    if(roots.size() == taskID) {
         uint64_t rootPage = ram_.createRootPageTable();
-        *(this->root) = rootPage;
+        roots.push_back(rootPage);
     }
     // 为device申请物理空间
-    return ram_.allocateMemory(*(this->root), *dev_addr, size) == 0 ? 0 : -1;
+    return ram_.allocateMemory(roots[taskID], *dev_addr, size) == 0 ? 0 : -1;
 
 }
 
-int vt_device::free_local_mem(inst_len *root){ 
-    ram_.cleanTask(*root);
-    root = nullptr;
+int vt_device::free_local_mem(int taskID){ 
+    if(taskID >= roots.size() || roots[taskID] == 0)
+        return -1;
+    ram_.cleanTask(roots[taskID]);
+    roots[taskID] = 0;
     return 0;
 }
 
-int vt_device::upload(inst_len *root, inst_len dest_addr, uint64_t size, void *data){
-    
-    ram_.writeDataVirtual(*(this->root), dest_addr+RODATA_BASE, size, data);
+int vt_device::upload(int taskID, inst_len dest_addr, uint64_t size, void *data){
+    if(taskID >= roots.size()|| roots[taskID] == 0)
+        return -1;
+    ram_.writeDataVirtual(roots[taskID], dest_addr+RODATA_BASE, size, data);
 
 }
 
-int vt_device::download(uint64_t *root, uint64_t dest_data_addr, void *src_addr, uint64_t size){
-
-    ram_.readDataVirtual(*(this->root), dest_data_addr+GLOBALMEM_BASE, size, src_addr);
+int vt_device::download(int taskID, uint64_t dest_data_addr, void *src_addr, uint64_t size){
+    if(taskID >= roots.size()|| roots[taskID] == 0)
+        return -1;    
+    ram_.readDataVirtual(roots[taskID], dest_data_addr+GLOBALMEM_BASE, size, src_addr);
 }
 /**
  * @brief   发送任务，每个任务由多个block组成，每次调用run发送一个任务

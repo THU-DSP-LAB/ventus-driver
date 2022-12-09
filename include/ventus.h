@@ -68,19 +68,19 @@ void* vt_host_ptr(vt_buffer_h hbuffer);
 
 /// NEED TO DEFINE
 /// allocate device memory and return address
-int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_vaddr);
+int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_vaddr, int taskID);
 
 /// NEED TO DEFINE
 /// release device memory
-int vt_mem_free(vt_device_h hdevice, uint64_t dev_vaddr);
+int vt_mem_free(vt_device_h hdevice, uint64_t dev_vaddr, int taskID);
 
 /// NEED TO DEFINE
 /// Copy bytes from buffer to device local memory
-int vt_copy_to_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size);
+int vt_copy_to_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size, int taskID);
 
 /// NEED TO DEFINE
 /// Copy bytes from device local memory to buffer
-int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size);
+int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size, int taskID);
 
 /// NEED TO DEFINE
 /// Start device execution
@@ -93,11 +93,11 @@ int vt_ready_wait(vt_device_h hdevice, uint64_t timeout);
 ////////////////////////////// UTILITY FUNCIONS ///////////////////////////////
 /// NEED TO DEFINE
 /// upload kernel bytes to device
-int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t size);
+int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t size, int taskID);
 
 /// NEED TO DEFINE
 /// upload kernel file to device
-int vt_upload_kernel_file(vt_device_h device, const char* filename);
+int vt_upload_kernel_file(vt_device_h device, const char* filename, int taskID);
 
 /// dump performance counters
 int vt_dump_perf(vt_device_h device, FILE* stream);

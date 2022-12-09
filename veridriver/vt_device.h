@@ -37,7 +37,7 @@ public:
          processor_(){
             processor_.attach_ram(&ram_);
             list<unordered_map<int, bool>> task_by_block_l;
-            root = nullptr;
+            vector<uint64_t> roots;
         }
     ~vt_device(){
         if(last_task_.valid())
@@ -50,21 +50,21 @@ public:
      * @param  root         指向根页表的指针        
      * @return int 
      */
-    int alloc_local_mem(inst_len size, inst_len *dev_maddr, uint64_t *root);
+    int alloc_local_mem(inst_len size, inst_len *dev_maddr, int taskID);
     /**
      * @brief 释放分配的空间，释放根页表所指向的空间
-     * @param  dev_maddr    指向根页表的指针   
+     * @param  taskID    要释放的内存空间对应的任务ID  
      * @return int 
      */
-    int free_local_mem(inst_len *dev_maddr);
+    int free_local_mem(int taskID);
     /**
      * @brief 将buffer写入到分配给GPU的memory中，只读区间
-     * @param  root              根页表     
+     * @param  taskID            任务ID    
      * @param  dest_addr         GPU的memory，虚拟地址
      * @param  size              大小
      * @return int 
      */
-    int upload( inst_len *root, 
+    int upload( int taskID, 
                 inst_len dest_addr, 
                 uint64_t size, 
                 void *data
@@ -77,7 +77,7 @@ public:
      * @param  size              大小
      * @return int 
      */
-    int download(   uint64_t *root, 
+    int download(   int taskID,
                     uint64_t dest_data_addr,
                     void *src_addr, 
                     uint64_t size
@@ -91,7 +91,7 @@ private:
     Memory ram_;
     future<int> last_task_;
     list<unordered_map<int, bool>> task_by_block_l; ///< list每个元素对应一个任务，每个任务由多个block组成
-    uint64_t *root; ///< 根页表
+    vector<uint64_t> roots; ///< 根页表
 };
 
 class vt_buffer{
