@@ -12,11 +12,12 @@
  * <table>
  * <tr><th>Date       <th>Version <th>Author  <th>Description
  * <tr><td>2022-11-24 <td>1.0     <td>wangh     <td>首次创建
+ * <tr><td>2022-12-14 <td>1.1
  * </table>
  */
 #include "processor.h"
 #include "controller.cpp"
-#include "vt_utils.h"
+#include "vt_config.h"
 #include <future>
 #include <list>
 #include <queue>
@@ -30,14 +31,22 @@ using namespace std;
 #define BLOCK_SIZE  64
 host_port_t* input_sig;
 
+struct kernel_info{
+    unordered_map<int, bool> blk_list;
+    int kernel_id;
+    kernel_info(int input_kernel_id, unordered_map<int, bool> input_blk_list):
+                kernel_id(input_kernel_id),
+                blk_list(input_blk_list){}
+};
+
 class vt_device {
 public:
     vt_device()
         :ram_(RAM_RANGE),
          processor_(){
             processor_.attach_ram(&ram_);
-            list<unordered_map<int, bool>> task_by_block_l;
-            vector<uint64_t> roots;
+            // list<unordered_map<int, bool>> task_by_block_l;
+            // vector<uint64_t> roots;
         }
     ~vt_device(){
         if(last_task_.valid())
@@ -82,16 +91,18 @@ public:
                     void *src_addr, 
                     uint64_t size
                 );
-    int start(int num_block = 1);
+    int start(int kernel_id, int num_block = 1);
     int wait(uint64_t time);
+    queue<int> get_finished_kernel();
 
 
 private:
     Processor processor_;
     Memory ram_;
     future<int> last_task_;
-    list<unordered_map<int, bool>> task_by_block_l; ///< list每个元素对应一个任务，每个任务由多个block组成
-    vector<uint64_t> roots; ///< 根页表
+    queue<int> finished_kernel_l;
+    list<kernel_info> kernel_list; ///< list每个元素对应一个任务，每个任务由多个block组成
+    vector<uint64_t> roots; ///< 根页表，为了支持每个kernel都有单独的根页表而声明
 };
 
 class vt_buffer{
