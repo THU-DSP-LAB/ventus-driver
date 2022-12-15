@@ -44,25 +44,44 @@ int vt_device::download(int taskID, uint64_t dest_data_addr, void *src_addr, uin
  * 每次发送一个任务会在list中增加一个元素
  * unordered_map的每个key代表block ID，value表示该block是否执行完成。
  * @param input_sig 输入到GPGPU的信号，与硬件接口对应
- * @param num_block 这个任务由多少个块组成
+ * @param num_block 这个任务由多少个block组成
  * @return int 0
  */
-int vt_device::start(int num_block){
+int vt_device::start(int kernel_id, int num_block){
     // host_port_t* input_per_block;
     // *input_per_block = *input_sig;
-    task_by_block_l.push_back(unordered_map<int, bool>());
+    for (auto it : kernel_list) {
+        if(it.kernel_id == kernel_id) {
+            cout << "this kernel has been excuted and not finished yet" << endl;
+            return -1;
+        }
+    }
+    // if(kernel_id > kernel_list.size()) {
+    //     #ifdef DEBUG_DEV
+    //         cout <<"Please assign kernel_id progressive increase." << endl;
+    //     #endif
+    //     return -1;
+    // }
+    // // 如果当前kernel_id对应的vector元素不存在，则创建一个新的元素
+    // else if(kernel_id == kernel_list.size()) {
+    //     kernel_list.push_back(kernel_info(kernel_id, unordered_map<int, bool>()));
+    // }
+    // // 如果存在，则重置
+    // else 
+    //     kernel_list[kernel_id].clear();
+    
     for(int i = 0; i < num_block; i++) {
         if(last_task_.valid()){
-            task_by_block_l.back().emplace(last_task_.get(), 0);
+            kernel_list.back().blk_list.emplace(last_task_.get(), 0);
         }
         last_task_ = std::async (std::launch::async, [&]() -> int {
-            processor_.run(input_sig);
+            processor_.run(input_sig, kernel_id);
         });
     }
     return 0;
 }
 /**
- * @brief 等待一定时间，
+ * @brief 等待一定时间，更新kernel执行完成的信息
  * @param  time              
  * @return int 
  */
@@ -82,26 +101,59 @@ int vt_device::wait(uint64_t time){
     std::queue<int> finished_block = processor_.wait(time);
     // 根据GPGPU返回的block完成情况更新任务队列，将已完成的block ID与保存的list中的block ID比较
     while(!finished_block.empty()) {
-        for(auto it=task_by_block_l.begin();it != task_by_block_l.end(); it++) {
-                if(it->find(finished_block.front()) != it->end()) {
-                    (*it)[finished_block.front()] = true;
-                    finished_block.pop();
-                }
-            finished_block.pop();
-            // 如果一个任务的所有block都完成，则将该任务pop掉，
+        bool block_legal = false;
+        for(auto it=kernel_list.begin();it != kernel_list.end(); it++) {
+            if(it->blk_list.find(finished_block.front()) != it->blk_list.end()) {
+                (*it).blk_list[finished_block.front()] = true;
+                finished_block.pop();
+                block_legal = true;
+
+            // 如果正在遍历的任务的所有block都完成，则将该任务记录下来并删除，
                 bool task_all_block_finished = true;
-                for(auto& it_map : *it) {
+                for(auto& it_map : it->blk_list) {
                     if(it_map.second == false) {
                         task_all_block_finished = false;
                         break;
                     }
                 }
                 if(task_all_block_finished == true) {
-                    it = task_by_block_l.erase(it);
+                    finished_kernel_l.push(it->kernel_id);
+                    it = kernel_list.erase(it);
                 }
+            }
+        }
+        if(!block_legal) {
+            cout << "return Wrong finished block ID, something error" << endl;
+            return -1;
         }
     }
     return 0;
+}
+/**
+ * @brief 返回已经完成的kernel
+ * @return queue<int> 
+ */
+queue<int> vt_device::get_finished_kernel() {
+    queue<int> tmp;
+    // while(!finished_kernel_l.empty()) {
+        while(!finished_kernel_l.empty()) {
+            tmp.push(finished_kernel_l.front());
+            finished_kernel_l.pop();
+        }
+    //     wait(RUN_DELAY);
+    // }
+    return tmp;
+}
+queue<int> vt_device::excute_all_kernel() {
+    queue<int> tmp;
+    while(!finished_kernel_l.empty()) {
+        while(!finished_kernel_l.empty()) {
+            tmp.push(finished_kernel_l.front());
+            finished_kernel_l.pop();
+        }
+        wait(RUN_DELAY);
+    }
+    return tmp;
 }
 
 //Implementation of class vt_buffer

@@ -17,7 +17,7 @@
 #include <queue>
 #include "vt_memory.h"
 
-#define RUN_DELAY   100 ///< 如果运行新任务时所有block都忙，最长等待时间
+
 #define INSTSIZE64
 #ifdef INSTSIZE64
     typedef uint64_t inst_len;
@@ -53,7 +53,7 @@ public:
 
     void attach_ram(Memory* ram);
     int start(const host_port_t* input_sig );
-    int run(host_port_t* input_sig);
+    int run(host_port_t* input_sig, int kernel_id);
     std::queue<int> wait(uint64_t cycle);
 private:
 

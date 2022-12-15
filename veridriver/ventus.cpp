@@ -136,11 +136,11 @@ extern int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t si
     return buffer->device()->download(0, dev_vaddr, buffer->data(), size);
 }
 
-extern int vt_start(vt_device_h hdevice) {
+extern int vt_start(vt_device_h hdevice, int kernel_id, int num_blocks) {
     if(hdevice == nullptr)
         return -1;
     auto device = (vt_device *) hdevice;
-    device->start();
+    device->start(kernel_id, num_blocks);
     return 0;
 }
 extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
@@ -148,6 +148,14 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
         return -1;
     vt_device* device = (vt_device*) hdevice;
     return device->wait(timeout);
+}
+
+extern int vt_finish_all_kernel(vt_device_h hdevice, queue<int> *finished_list) {
+    if(hdevice == nullptr)
+        return -1;
+    vt_device* device = (vt_device*) hdevice;
+    *finished_list = device->excute_all_kernel();
+    return 0;
 }
 
 extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t size, int taskID) {

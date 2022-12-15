@@ -90,6 +90,10 @@ int vt_start(vt_device_h hdevice);
 /// Wait for device ready with milliseconds timeout
 int vt_ready_wait(vt_device_h hdevice, uint64_t timeout);
 
+/// NEED TO DEFINE
+/// Excute all kernels and return kernel_id
+int vt_finish_all_kernel(vt_device_h hdevice, queue<int> *finished_list);
+
 ////////////////////////////// UTILITY FUNCIONS ///////////////////////////////
 /// NEED TO DEFINE
 /// upload kernel bytes to device

@@ -94,7 +94,7 @@ public:
     int start(int kernel_id, int num_block = 1);
     int wait(uint64_t time);
     queue<int> get_finished_kernel();
-
+    queue<int> excute_all_kernel();
 
 private:
     Processor processor_;
