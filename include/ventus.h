@@ -11,6 +11,7 @@
  * <table>
  * <tr><th>Date       <th>Version <th>Author  <th>Description
  * <tr><td>2022-11-16 <td>1.0     <td>yangzexia     <td>main程序和驱动之间的接口
+ * <tr><td>2022-12-15 <td>1.1     <td>yangzexia     <td>增加了执行所有kernel并返回id的接口
  * </table>
  */
 #ifndef __VT_DRIVER_H__
