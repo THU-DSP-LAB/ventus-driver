@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <queue>
 
 #ifdef __cplusplus
 extern "C" {
@@ -92,7 +93,7 @@ int vt_ready_wait(vt_device_h hdevice, uint64_t timeout);
 
 /// NEED TO DEFINE
 /// Excute all kernels and return kernel_id
-int vt_finish_all_kernel(vt_device_h hdevice, queue<int> *finished_list);
+int vt_finish_all_kernel(vt_device_h hdevice, std::queue<int> *finished_list);
 
 ////////////////////////////// UTILITY FUNCIONS ///////////////////////////////
 /// NEED TO DEFINE

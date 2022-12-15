@@ -4,6 +4,8 @@
 #include <ventus.h>
 #include <chrono>
 
+#include "MemConfig.h"
+
 
 #define RT_CHECK(_expr)                                         \
    do {                                                         \
@@ -20,10 +22,17 @@
 const char* kernel_file = "kernel.bin";
 int test = -1;
 uint32_t count = 0;
+int default_taskID = 0;
 
 vt_device_h device = nullptr;
 vt_buffer_h staging_buf = nullptr;
-kernel_arg_t kernel_arg;
+
+struct kernel_arg_t {
+  uint32_t count;
+  uint64_t src_addr;
+  uint64_t dst_addr;
+} kernel_arg;
+
 
 static void show_usage() {
    std::cout << "Vortex Test." << std::endl;
@@ -60,8 +69,8 @@ void cleanup() {
     vt_buf_free(staging_buf);
   }
   if (device) {
-    vt_mem_free(device, kernel_arg.src_addr);
-    vt_mem_free(device, kernel_arg.dst_addr);
+    vt_mem_free(device, kernel_arg.src_addr, default_taskID);
+    vt_mem_free(device, kernel_arg.dst_addr, default_taskID);
     vt_dev_close(device);
   }
 }
@@ -70,7 +79,7 @@ uint64_t shuffle(int i, uint64_t value) {
   return (value << i) | (value & ((1 << i)-1));;
 }
 
-int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks) {
+int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int taskID) {
   int errors = 0;
   
   auto time_start = std::chrono::high_resolution_clock::now();
@@ -93,7 +102,7 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks) {
   // write source buffer to local memory
   std::cout << "write source buffer to local memory" << std::endl;
   auto t0 = std::chrono::high_resolution_clock::now();
-  RT_CHECK(vt_copy_to_dev(staging_buf, dev_addr, 64 * num_blocks, 0));
+  RT_CHECK(vt_copy_to_dev(staging_buf, dev_addr, 64 * num_blocks, taskID));
   auto t1 = std::chrono::high_resolution_clock::now();
 
   // clear destination buffer
@@ -104,7 +113,7 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks) {
   // read destination buffer from local memory
   std::cout << "read destination buffer from local memory" << std::endl;
   auto t2 = std::chrono::high_resolution_clock::now();
-  RT_CHECK(vt_copy_from_dev(staging_buf, dev_addr, 64 * num_blocks, 0));
+  RT_CHECK(vt_copy_from_dev(staging_buf, dev_addr, 64 * num_blocks, taskID));
   auto t3 = std::chrono::high_resolution_clock::now();
 
   // verify result
@@ -140,7 +149,8 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks) {
 
 int run_kernel_test(const kernel_arg_t& kernel_arg, 
                     uint32_t buf_size, 
-                    uint32_t num_points) {
+                    uint32_t num_points,
+                    int taskID) {
   int errors = 0; 
 
   auto time_start = std::chrono::high_resolution_clock::now();
@@ -154,7 +164,7 @@ int run_kernel_test(const kernel_arg_t& kernel_arg,
   }
   std::cout << "upload source buffer" << std::endl;
   auto t0 = std::chrono::high_resolution_clock::now();
-  RT_CHECK(vt_copy_to_dev(staging_buf, kernel_arg.src_addr, buf_size, 0));
+  RT_CHECK(vt_copy_to_dev(staging_buf, kernel_arg.src_addr, buf_size, taskID));
   auto t1 = std::chrono::high_resolution_clock::now();
 
   // clear destination buffer
@@ -165,7 +175,7 @@ int run_kernel_test(const kernel_arg_t& kernel_arg,
     }
   }  
   std::cout << "clear destination buffer" << std::endl;
-  RT_CHECK(vt_copy_to_dev(staging_buf, kernel_arg.dst_addr, buf_size, 0));
+  RT_CHECK(vt_copy_to_dev(staging_buf, kernel_arg.dst_addr, buf_size, taskID));
 
   // start device
   std::cout << "start execution" << std::endl;
@@ -177,7 +187,7 @@ int run_kernel_test(const kernel_arg_t& kernel_arg,
   // read destination buffer from local memory
   std::cout << "read destination buffer from local memory" << std::endl;
   auto t4 = std::chrono::high_resolution_clock::now();
-  RT_CHECK(vt_copy_from_dev(staging_buf, kernel_arg.dst_addr, buf_size, 0));
+  RT_CHECK(vt_copy_from_dev(staging_buf, kernel_arg.dst_addr, buf_size, taskID));
   auto t5 = std::chrono::high_resolution_clock::now();
 
   
@@ -217,7 +227,8 @@ int run_kernel_test(const kernel_arg_t& kernel_arg,
 int main(int argc, char *argv[]) {
 
   size_t value; 
-  int taskID = 0;
+  kernel_arg.src_addr = RODATA_BASE;
+  kernel_arg.dst_addr = RWDATA_BASE;
   
   // parse command arguments
   parse_args(argc, argv);
@@ -231,9 +242,10 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vt_dev_open(&device));
   
   uint64_t max_cores;
-  RT_CHECK(vt_dev_caps(device, VT_CAPS_MAX_CORES, &max_cores));
+  //RT_CHECK(vt_dev_caps(device, VT_CAPS_MAX_CORES, &max_cores));
+  // points是什么？
   uint32_t num_points = count;
-  uint32_t num_blocks = (num_points * sizeof(int32_t) + 63) / 64;
+  uint32_t num_blocks = (num_points * sizeof(int64_t) + 63) / 64;
   uint32_t buf_size   = num_blocks * 64;
 
   std::cout << "number of points: " << num_points << std::endl;
@@ -242,10 +254,10 @@ int main(int argc, char *argv[]) {
   // allocate device memory
   /// @note deive的内存空间，函数内部调用了成员的函数mem_allocator_::allocate()
   /// 
-  RT_CHECK(vt_mem_alloc(device, buf_size, &value, taskID));
-  kernel_arg.src_addr = value;
-  RT_CHECK(vt_mem_alloc(device, buf_size, &value, taskID));
-  kernel_arg.dst_addr = value;
+  RT_CHECK(vt_mem_alloc(device, buf_size, &kernel_arg.src_addr, default_taskID));
+  // kernel_arg.src_addr = value;
+  RT_CHECK(vt_mem_alloc(device, buf_size, &kernel_arg.dst_addr, default_taskID));
+  // kernel_arg.dst_addr = value;
 
   kernel_arg.count = num_points;
 
@@ -261,14 +273,14 @@ int main(int argc, char *argv[]) {
   // run tests  
   if (0 == test || -1 == test) {
     std::cout << "run memcopy test" << std::endl;
-    RT_CHECK(run_memcopy_test(kernel_arg.src_addr, 0x0badf00d40ff40ff, num_blocks));
+    RT_CHECK(run_memcopy_test(kernel_arg.src_addr, 0x0badf00d40ff40ff, num_blocks, default_taskID));
   }
 
   if (1 == test || -1 == test) {
     // upload program
     /// @note 写到了vt_device的成员ram_里
     std::cout << "upload program" << std::endl;  
-    RT_CHECK(vt_upload_kernel_file(device, kernel_file));
+    RT_CHECK(vt_upload_kernel_file(device, kernel_file, default_taskID));
 
     // upload kernel argument
     /// @note 指定一块上下文的内存空间，地址指针为结构体staging_buf，其中包括了结果要保存的内存地址，
@@ -277,11 +289,11 @@ int main(int argc, char *argv[]) {
     {
       auto buf_ptr = (void*)vt_host_ptr(staging_buf);
       memcpy(buf_ptr, &kernel_arg, sizeof(kernel_arg_t));
-      RT_CHECK(vt_copy_to_dev(staging_buf, KERNEL_ARG_DEV_MEM_ADDR, sizeof(kernel_arg_t), 0));
+      RT_CHECK(vt_copy_to_dev(staging_buf, kernel_arg.dst_addr, sizeof(kernel_arg_t), default_taskID));
     }
 
     std::cout << "run kernel test" << std::endl;
-    RT_CHECK(run_kernel_test(kernel_arg, buf_size, num_points));
+    RT_CHECK(run_kernel_test(kernel_arg, buf_size, num_points, default_taskID));
   }
 
   // cleanup
