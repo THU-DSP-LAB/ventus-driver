@@ -8,7 +8,7 @@ public:
     uint32_t source;
     uint64_t address;
     uint32_t mask;
-    uint32_t *data;
+    uint64_t *data;
     uint8_t ready; // controller -> gpu, output
     uint8_t valid; // gpu -> controller, input
 //    TLBundleA(uint32_t num_thread){  }
@@ -20,7 +20,7 @@ public:
     uint8_t opcode;
     uint32_t size;
     uint32_t source;
-    uint32_t *data;
+    uint64_t *data;
     uint8_t ready; // gpu -> controller, input
     uint8_t valid; // controller -> gpu, output
 //    TLBundleD(uint32_t num_thread){  }
@@ -31,13 +31,13 @@ class Controller{
 public:
     TLBundleA *req;
     TLBundleD *rsp;
-    uint32_t *data;
+    uint64_t *data;
     int default_delay = 3;
     Controller(uint32_t num_thread){
         req = new TLBundleA();
         rsp = new TLBundleD();
         num_ = num_thread;
-        data = new uint32_t[num_thread];
+        data = new uint64_t[num_thread];
     }
     ~Controller(){
         req->data = nullptr;
@@ -82,9 +82,9 @@ public:
                 rsp->source = source_;
                 rsp->opcode = rw_;
                 if(rw_ == 4) // read
-                    mem->readWordsPhysical<uint32_t>(addr_, num_, rsp->data);
+                    mem->readWordsPhysical<uint64_t>(addr_, num_, rsp->data);
                 if(rw_ == 1) // write
-                    mem->writeWordsPhysical<uint32_t>(addr_, num_, data, &mask_);
+                    mem->writeWordsPhysical<uint64_t>(addr_, num_, data, &mask_);
                 rw_ = 0;
                 rsp_valid_ = 0;
                 req_ready_ = 1;

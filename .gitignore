@@ -1,5 +1,5 @@
 /verilator/
-obj_dir/*
+.idea/*
 .vscode/*
 main.exe
 a.exe
@@ -7,3 +7,4 @@ test.cpp
 test.out
 test
 html/
+cmake-build*

@@ -16,13 +16,19 @@
  * <tr><td>2022-11-16 <td>1.0     <td>yangzexia     <td>创建
  * </table>
  */
+#define DEBUG_MMU
 
 #include "processor.h"
 #include "vt_utils.h"
 #include "vt_config.h"
 
 #include <verilated.h>
-#include <VVentus.h>
+#ifdef  DEBUG_GPGPU
+    #include <VVentus.h>
+#endif
+#ifdef DEBUG_MMU
+    #include "VMMUtest.h"
+#endif
 
 #include "vt_memory.h"
 #include "controller.cpp"
@@ -45,7 +51,14 @@ using namespace ventus;
 class Processor::Impl{
 public:
     Impl():mem_ctrl(NUM_THREAD) {
-        device_ = new VVentus();
+        #ifdef DEBUG_GPGPU
+            device_ = new VVentus();
+        #endif
+        #ifdef DEBUG_MMU
+            device_ = new VMMUtest();
+            
+            
+        #endif
         ram_ = nullptr;
         for(int i = 0; i < MAX_BLOCK_PER_SM; i++) { 
             block_finish_list[i] = 0;
@@ -133,8 +146,7 @@ private:
         /// 读取TLB_A和TLB_D的值并接到GPGPU,
         /// @todo: 改成硬件对应的名称
         {
-            device_->TLBundleD = mem_ctrl.rsp;
-            mem_ctrl.req = device_->TLBundleA;
+            get_ram_bits_port();
         }
         //给GPGPU和内存控制器的时钟赋值并实例化。
         device_->clock = 0;
@@ -155,6 +167,23 @@ private:
         /// @todo ram的tick实现
     }
 
+    void get_ram_bits_port() {
+        mem_ctrl.req->address = device_->io_out_a_bits_address;
+        mem_ctrl.req->opcode = device_->io_out_a_bits_opcode;
+        mem_ctrl.req->size = device_->io_out_a_bits_opcode;
+        mem_ctrl.req->source = device_->io_out_a_bits_source;
+        mem_ctrl.req->mask = device_->io_out_a_bits_mask;
+        *(mem_ctrl.req->data) = device_->io_out_a_bits_data;
+        mem_ctrl.req->valid = device_->io_out_a_valid;
+        device_->io_out_a_ready = mem_ctrl.req->ready;
+
+        device_->io_out_d_bits_opcode = mem_ctrl.rsp->opcode;
+        device_->io_out_d_bits_size = mem_ctrl.rsp->size;
+        device_->io_out_d_bits_source = mem_ctrl.rsp->source;
+        device_->io_out_d_bits_data = *(mem_ctrl.rsp->data);
+        device_->io_out_d_valid = mem_ctrl.rsp->valid;
+        mem_ctrl.rsp->ready = device_->io_out_d_ready;
+    }
     void eval(int clk){
         device_->eval();
         mem_ctrl.controller_eval(clk, ram_);
@@ -207,7 +236,12 @@ public:
     
 
 private:
+#ifdef DEBUG_GPGPU
     VVentus *device_; ///< GPGPU
+#endif
+#ifdef DEBUG_MMU
+    VMMUtest *device_;
+#endif
     Memory *ram_; ///< GPGPU的ram
 
     int block_busy_list[MAX_BLOCK_PER_SM];
