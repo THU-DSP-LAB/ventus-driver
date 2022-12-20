@@ -20,7 +20,7 @@ include_directories(verilator/src)
 #include_directories(verilator/test_regress/t)
 
 add_subdirectory(veridriver)
-target_link_libraries(${PROJECT} PUBLIC veridriver)
 
 add_executable(ventus_driver
         tests/test_mmu.cpp)
+target_link_libraries(${PROJECT} PUBLIC veridriver)
