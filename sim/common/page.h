@@ -214,7 +214,7 @@ public:
         return -1;
     }
 
-    template<class T> T readWord(u_int64_t addr){
+    template<class T> T readWord(uint64_t addr){
         T out;
         int flag = readData(addr, sizeof(T), &out);
         if(!flag)
@@ -223,7 +223,7 @@ public:
             return 0;
     }
 
-    template<class T> int readWords(u_int64_t addr, u_int64_t num, T *data, const void *mask = nullptr){
+    template<class T> int readWords(uint64_t addr, uint64_t num, T *data, const void *mask = nullptr){
         readData(addr, num * sizeof(T), data);
         if(mask != nullptr){
             for(uint64_t i = 0; i < num; i++){

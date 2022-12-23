@@ -104,7 +104,7 @@ public:
     template<class T> T readWordPhysical(uint64_t p_addr){
         return pmm->readWord<T>(p_addr);
     }
-    template<class T> int readWordsPhysical(u_int64_t p_addr, u_int64_t num, T *data, const void *mask = nullptr){
+    template<class T> int readWordsPhysical(uint64_t p_addr, uint64_t num, T *data, const void *mask = nullptr){
         pmm->readWords<T>(p_addr, num, data, mask);
         return 0;
     }
@@ -136,7 +136,7 @@ public:
     template<class T> int writeWordPhysical(uint64_t p_addr, const T in){
         return pmm->writeWord<T>(p_addr, in);
     }
-    template<class T> int writeWordsPhysical(u_int64_t p_addr, u_int64_t num, const T *in, const void *mask = nullptr){
+    template<class T> int writeWordsPhysical(uint64_t p_addr, uint64_t num, const T *in, const void *mask = nullptr){
         return pmm->writeWords<T>(p_addr, num, in, mask);
     }
 
