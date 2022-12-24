@@ -271,3 +271,9 @@ int Processor::run(host_port_t* input_sig, int kernel_id) {
 std::queue<int> Processor::wait(uint64_t cycle) {
     return impl_->wait(cycle);
 }
+
+
+int main() {
+    cout << "Hello, World!" << endl;
+    return 0;
+}
