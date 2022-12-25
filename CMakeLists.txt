@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.23)
+cmake_minimum_required(VERSION 3.20)
 set(PROJECT ventus_driver)
 project(${PROJECT})
 
@@ -18,6 +18,8 @@ include_directories(verilator/src)
 #include_directories(verilator/src/obj_dbg)
 #include_directories(verilator/src/obj_opt)
 #include_directories(verilator/test_regress/t)
+
+add_subdirectory(sim)
 
 add_subdirectory(veridriver)
 

@@ -11,7 +11,8 @@ file(GLOB_RECURSE SIM_LIB_SRCS ${CMAKE_SOURCE_DIR}/sim/*[cpp|h])
 file(GLOB_RECURSE VERILATOR_SRCS ${CMAKE_SOURCE_DIR}/verilator/*[cpp|h])
 file(GLOB_RECURSE COMMON_SRCS ${CMAKE_SOURCE_DIR}/common/*[cpp|h])
 # aux_source_directory()
-message("${SIM_LIB_SRCS}")
+# message("${SIM_LIB_SRCS}")
+
 
 add_library(${PROJECT} SHARED ${SIM_LIB_SRCS} ${VERILATOR_SRCS} ${COMMON_SRCS} ${RTL_SRCS})
 
