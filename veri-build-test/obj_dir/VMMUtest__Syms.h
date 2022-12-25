@@ -4,32 +4,34 @@
 // Internal details; most calling programs do not need this header,
 // unless using verilator public meta comments.
 
-#ifndef _VMMUTEST__SYMS_H_
-#define _VMMUTEST__SYMS_H_  // guard
+#ifndef VERILATED_VMMUTEST__SYMS_H_
+#define VERILATED_VMMUTEST__SYMS_H_  // guard
 
-#include "verilated_heavy.h"
+#include "verilated.h"
 
-// INCLUDE MODULE CLASSES
+// INCLUDE MODEL CLASS
+
 #include "VMMUtest.h"
 
-// SYMS CLASS
-class VMMUtest__Syms : public VerilatedSyms {
+// INCLUDE MODULE CLASSES
+#include "VMMUtest___024root.h"
+
+// SYMS CLASS (contains all model state)
+class VMMUtest__Syms final : public VerilatedSyms {
   public:
-    
-    // LOCAL STATE
-    const char* __Vm_namep;
-    bool __Vm_didInit;
-    
-    // SUBCELL STATE
-    VMMUtest*                      TOPp;
-    
-    // CREATORS
-    VMMUtest__Syms(VMMUtest* topp, const char* namep);
-    ~VMMUtest__Syms() {}
-    
+    // INTERNAL STATE
+    VMMUtest* const __Vm_modelp;
+    bool __Vm_didInit = false;
+
+    // MODULE INSTANCE STATE
+    VMMUtest___024root             TOP;
+
+    // CONSTRUCTORS
+    VMMUtest__Syms(VerilatedContext* contextp, const char* namep, VMMUtest* modelp);
+    ~VMMUtest__Syms();
+
     // METHODS
-    inline const char* name() { return __Vm_namep; }
-    
+    const char* name() { return TOP.name(); }
 } VL_ATTR_ALIGNED(VL_CACHE_LINE_BYTES);
 
 #endif  // guard

@@ -1,5 +1,7 @@
 #include <iostream>
-#include <VMMUtest.h>
+#include "verilated.h"
+#include "VMMUtest.h"
+
 
 using namespace std;
 
