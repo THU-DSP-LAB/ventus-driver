@@ -13,3 +13,4 @@ include_directories(${CMAKE_SOURCE_DIR}/../common)
 include_directories(${CMAKE_SOURCE_DIR}/../../include)
 include_directories(${CMAKE_SOURCE_DIR}/../../common)
 
+add_custom_target()
