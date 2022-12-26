@@ -30,19 +30,19 @@
 #include <list>
 #include <chrono>
 // driver/common
-#include <ventus.h>
+#include "ventus.h"
 
-#include <vt_device.h>
+#include "vt_device.h"
 
 ///@todo MMU，内存分配
 // #include <vt_malloc.h> 
-#include <vt_utils.h>
+#include "vt_utils.h"
 
 //#include <VT_config.h>
 // sim/common
-#include <vt_memory.h>
+#include "vt_memory.h"
 // #include <util.h>
-#include <processor.h>
+#include "processor.h"
 
 #define RAM_PAGE_SIZE 4096
 
