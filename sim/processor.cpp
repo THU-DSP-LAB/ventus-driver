@@ -274,6 +274,6 @@ std::queue<int> Processor::wait(uint64_t cycle) {
 
 
 int main() {
-    cout << "Hello, World!" << endl;
+    std::cout << "Hello, World! from Processor.cpp" << std::endl;
     return 0;
 }
