@@ -17,6 +17,7 @@
  */
 #include "processor.h"
 #include "controller.cpp"
+#include "vt_utils.h"
 #include "vt_config.h"
 #include <future>
 #include <list>
@@ -28,8 +29,7 @@ using namespace ventus;
 using namespace std;
 //These macro is defined as test
 
-#define BLOCK_SIZE  64
-host_port_t* input_sig;
+
 
 struct kernel_info{
     unordered_map<int, bool> blk_list;

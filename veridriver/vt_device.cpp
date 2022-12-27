@@ -3,7 +3,7 @@
 #include "vt_utils.h"
 #include "MemConfig.h"
 
-
+host_port_t* input_sig;
 
 int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr, int taskID){
     if(size <= 0 || dev_addr == nullptr || taskID > roots.size()) 
@@ -28,14 +28,15 @@ int vt_device::free_local_mem(int taskID){
 int vt_device::upload(int taskID, inst_len dest_addr, uint64_t size, void *data){
     if(taskID >= roots.size()|| roots[taskID] == 0)
         return -1;
-    ram_.writeDataVirtual(roots[taskID], dest_addr+RODATA_BASE, size, data);
-
+    return ram_.writeDataVirtual(roots[taskID], dest_addr+RODATA_BASE, size, data);
+    
 }
 
 int vt_device::download(int taskID, uint64_t dest_data_addr, void *src_addr, uint64_t size){
     if(taskID >= roots.size()|| roots[taskID] == 0)
         return -1;    
-    ram_.readDataVirtual(roots[taskID], dest_data_addr+GLOBALMEM_BASE, size, src_addr);
+    return ram_.readDataVirtual(roots[taskID], dest_data_addr+GLOBALMEM_BASE, size, src_addr);
+
 }
 /**
  * @brief   发送任务，每个任务由多个block组成，每次调用run发送一个任务
@@ -75,7 +76,7 @@ int vt_device::start(int kernel_id, int num_block){
             kernel_list.back().blk_list.emplace(last_task_.get(), 0);
         }
         last_task_ = std::async (std::launch::async, [&]() -> int {
-            processor_.run(input_sig, kernel_id);
+            return processor_.run(input_sig, kernel_id);
         });
     }
     return 0;

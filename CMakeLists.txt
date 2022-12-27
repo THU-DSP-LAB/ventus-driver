@@ -3,26 +3,30 @@ set(PROJECT ventus_driver)
 project(${PROJECT})
 
 set(CMAKE_CXX_STANDARD 11)
+# set(CMAKE_CXX_FLAGS -Wl,--whole-archive -Wl,--no-whole-archive)
 
 include_directories(common)
 include_directories(include)
-#include_directories(obj_dir)
 include_directories(sim)
 include_directories(sim/common)
 include_directories(tests)
 include_directories(veridriver)
-include_directories(verilator/include)
-include_directories(verilator/include/gtkwav)
-include_directories(verilator/include/vltstd)
-include_directories(verilator/src)
-#include_directories(verilator/src/obj_dbg)
-#include_directories(verilator/src/obj_opt)
-#include_directories(verilator/test_regress/t)
+
 
 add_subdirectory(sim)
+# find_library(librtlsim.a ${CMAKE_BINARY_DIR}/sim/obj_dir)
 
-add_subdirectory(veridriver)
+# if(PACKAGES_NAME MATCHES "-NOTFOUND")
+#         message(FATAL_ERROR "${PACKAGE_NAME} not found!")
+# else()
+#         message(STATUS "${PACKAGE_NAME} found!")
+        add_subdirectory(veridriver)
+# endif()
 
-add_executable(ventus_driver
-        tests/test_mmu.cpp)
-target_link_libraries(${PROJECT} PUBLIC veridriver)
+
+add_executable(${PROJECT} tests/test_mmu.cpp)
+# link_directories(${CMAKE_BINARY_DIR}/sim)
+target_link_directories(${PROJECT} PUBLIC ${CMAKE_BINARY_DIR}/veridriver)
+target_link_libraries(${PROJECT} librtldriver.so)
+
+add_subdirectory(tests)

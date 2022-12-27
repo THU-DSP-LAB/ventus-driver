@@ -273,7 +273,7 @@ std::queue<int> Processor::wait(uint64_t cycle) {
 }
 
 
-int main() {
-    std::cout << "Hello, World! from Processor.cpp" << std::endl;
-    return 0;
-}
+// int main() {
+//     std::cout << "Hello, World! from Processor.cpp" << std::endl;
+//     return 0;
+// }

@@ -1,19 +1,36 @@
 cmake_minimum_required(VERSION 3.23)
-set(PROJECT veridriver)
+set(PROJECT rtldriver)
 project(${PROJECT})
 
 set(CMAKE_CXX_STANDARD 11)
-include_directories(${CMAKE_SOURCE_DIR}/../include)
 
-file(GLOB_RECURSE RTL_SRCS ${CMAKE_SOURCE_DIR}/obj_dir/*)
+include_directories(${CMAKE_SOURCE_DIR}/include)
+include_directories(${CMAKE_SOURCE_DIR}/common)
+include_directories(${CMAKE_SOURCE_DIR}/sim)
+include_directories(${CMAKE_SOURCE_DIR}/sim/common)
 
-file(GLOB_RECURSE SIM_LIB_SRCS ${CMAKE_SOURCE_DIR}/sim/*[cpp|h])
-file(GLOB_RECURSE VERILATOR_SRCS ${CMAKE_SOURCE_DIR}/verilator/*[cpp|h])
-file(GLOB_RECURSE COMMON_SRCS ${CMAKE_SOURCE_DIR}/common/*[cpp|h])
+set(CMAKE_CXX_FLAGS -fPIC)
+
+file(GLOB_RECURSE SRCS ./*)
+
+# file(GLOB_RECURSE VERILATOR_SRCS ${CMAKE_SOURCE_DIR}/verilator/*[cpp|h])
+# file(GLOB_RECURSE COMMON_SRCS ${CMAKE_SOURCE_DIR}/common/*[cpp|h])
 # aux_source_directory()
-# message("${SIM_LIB_SRCS}")
 
+link_directories(${CMAKE_BINARY_DIR}/sim/obj_dir)
 
-add_library(${PROJECT} SHARED ${SIM_LIB_SRCS} ${VERILATOR_SRCS} ${COMMON_SRCS} ${RTL_SRCS})
+add_library(${PROJECT}_static STATIC ${SRCS})
+add_dependencies(${PROJECT}_static rtlsim)
 
-install(TARGETS ${PROJECT} LIBRARY DESTINATION ${PROJECT_SOURCE_DIR}/lib)
+target_link_libraries(${PROJECT}_static PUBLIC librtlsim.a)
+
+set_target_properties(${PROJECT}_static PROPERTIES OUTPUT_NAME "${PROJECT}")
+set_target_properties(${PROJECT}_static PROPERTIES CLEAN_DIRECT_OUTPUT 1)
+
+add_library(${PROJECT} SHARED ${SRCS})
+add_dependencies(${PROJECT} rtlsim)
+target_link_libraries(${PROJECT} PUBLIC librtlsim.a)
+set_target_properties(${PROJECT} PROPERTIES OUTPUT_NAME "${PROJECT}")
+set_target_properties(${PROJECT} PROPERTIES CLEAN_DIRECT_OUTPUT 1)
+
+# install(TARGETS ${PROJECT} LIBRARY DESTINATION ${PROJECT_SOURCE_DIR}/lib)
