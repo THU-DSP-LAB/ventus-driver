@@ -2444,9 +2444,4 @@ module MMUtest(
     `endif // SYNTHESIS
   end
 
-  initial begin 
-    $display("Hello World from MMUtest.v"); 
-    $finish; 
-    end
-  
 endmodule

@@ -13,8 +13,8 @@ int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr, int taskID){
         roots.push_back(rootPage);
     }
     // 为device申请物理空间
-    return ram_.allocateMemory(roots[taskID], *dev_addr, size) == 0 ? 0 : -1;
-
+    ram_.allocateMemory(roots[taskID], *dev_addr, size);
+    return 0;
 }
 
 int vt_device::free_local_mem(int taskID){ 
@@ -28,6 +28,7 @@ int vt_device::free_local_mem(int taskID){
 int vt_device::upload(int taskID, inst_len dest_addr, uint64_t size, void *data){
     if(taskID >= roots.size()|| roots[taskID] == 0)
         return -1;
+
     return ram_.writeDataVirtual(roots[taskID], dest_addr+RODATA_BASE, size, data);
     
 }
@@ -39,7 +40,7 @@ int vt_device::download(int taskID, uint64_t dest_data_addr, void *src_addr, uin
 
 }
 /**
- * @brief   发送任务，每个任务由多个block组成，每次调用run发送一个任务
+ * @brief   发送任务，每个任务由多个block组成，每次调用start发送一个任务
  * 传入到硬件的wg_id由processor.run()决定，函数执行完成后会返回实际的wg_id,
  * 任务队列的数据结构为一个元素为unordered_map的list，list的每个元素代表一个任务，
  * 每次发送一个任务会在list中增加一个元素

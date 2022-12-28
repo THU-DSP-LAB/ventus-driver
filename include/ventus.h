@@ -86,7 +86,7 @@ int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size, int
 
 /// NEED TO DEFINE
 /// Start device execution
-int vt_start(vt_device_h hdevice);
+int vt_start(vt_device_h hdevice, int taskID, int num_blocks);
 
 /// NEED TO DEFINE
 /// Wait for device ready with milliseconds timeout

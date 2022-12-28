@@ -75,9 +75,11 @@ public:
         ram_ = ram;
     }
      /**
-      * @brief GPGPU启动任务，传入任务需配置的参数
+      * @brief GPGPU启动任务，传入任务需配置的参数，每次调用一次该函数选择一个block分配任务
       * 每个任务由多个block组成，driver按block发送配置信息，在接收到一个block的信息之后，
       * GPGPU即开始执行，执行完毕之后返回相应block的ID
+      * @param input_sig host request signals
+      * @param kernel_id 要执行的任务的id
       * @return int 
       */
     int run(host_port_t* input_sig, int kernel_id) {
@@ -118,6 +120,7 @@ public:
                 return i;// 返回该block在GPGPU中运行实际对应的标号
             }
         }
+        return -1;
     }
     
     /// @todo 打印ram访问请求的函数
@@ -158,7 +161,7 @@ private:
         if(device_->io_host_rsp_valid) {
             device_->io_host_rsp_ready = 1;
             this->tick();
-            int finished_block = (device_->io_host_rsp_bits_inflight_wg_buffer_host_wf_done_wg_id >> (int)ceil(log2(NUM_SM))) & (1 << (int)ceil(log2(NUM_SM)) - 1);
+            int finished_block = (device_->io_host_rsp_bits_inflight_wg_buffer_host_wf_done_wg_id >> (int)ceil(log2(NUM_SM))) & ((1 << (int)ceil(log2(NUM_SM))) - 1);
             finished_block_queue.push(finished_block);
             block_busy_list[finished_block] = 0;
         }
@@ -220,18 +223,20 @@ public:
     bool all_block_busy() {
         bool all_busy_flag = 1;
         for(int i = 0; i < MAX_BLOCK; i++) {
-            if(block_busy_list[i] = 0)
+            if(block_busy_list[i] == 0)
                 all_busy_flag = 0;
         }
         return all_busy_flag;
     }
     /**
+     * @deprecated
      * @brief 返回已完成的block的ID
      * @return int 
      */
     int finished_block(){
         if(!finished_block_queue.empty())
             finished_block_queue.pop();
+        return -1;
     }
     
 

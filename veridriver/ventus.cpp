@@ -136,11 +136,11 @@ extern int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t si
     return buffer->device()->download(0, dev_vaddr, buffer->data(), size);
 }
 
-extern int vt_start(vt_device_h hdevice, int kernel_id, int num_blocks) {
+extern int vt_start(vt_device_h hdevice, int taskID, int num_blocks) {
     if(hdevice == nullptr)
         return -1;
     auto device = (vt_device *) hdevice;
-    device->start(kernel_id, num_blocks);
+    device->start(taskID, num_blocks);
     return 0;
 }
 extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {

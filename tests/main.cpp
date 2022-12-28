@@ -180,7 +180,7 @@ int run_kernel_test(const kernel_arg_t& kernel_arg,
   // start device
   std::cout << "start execution" << std::endl;
   auto t2 = std::chrono::high_resolution_clock::now();
-  RT_CHECK(vt_start(device));
+  RT_CHECK(vt_start(device, taskID, 1));
   RT_CHECK(vt_ready_wait(device, MAX_TIMEOUT));
   auto t3 = std::chrono::high_resolution_clock::now();
 
