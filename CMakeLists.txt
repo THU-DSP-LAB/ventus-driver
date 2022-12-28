@@ -14,19 +14,11 @@ include_directories(veridriver)
 
 
 add_subdirectory(sim)
-# find_library(librtlsim.a ${CMAKE_BINARY_DIR}/sim/obj_dir)
-
-# if(PACKAGES_NAME MATCHES "-NOTFOUND")
-#         message(FATAL_ERROR "${PACKAGE_NAME} not found!")
-# else()
-#         message(STATUS "${PACKAGE_NAME} found!")
-        add_subdirectory(veridriver)
-# endif()
-
-
-add_executable(${PROJECT} tests/test_mmu.cpp)
-# link_directories(${CMAKE_BINARY_DIR}/sim)
-target_link_directories(${PROJECT} PUBLIC ${CMAKE_BINARY_DIR}/veridriver)
-target_link_libraries(${PROJECT} librtldriver.so)
-
+add_subdirectory(veridriver)
 add_subdirectory(tests)
+
+set(CODING_TEST test)
+add_executable(${CODING_TEST} test.cpp)
+
+
+#add_subdirectory(tests)

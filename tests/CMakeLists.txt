@@ -2,24 +2,20 @@ cmake_minimum_required(VERSION 3.15)
 
 project(cmake-exe-test)
 
-execute_process(COMMAND python -c "import multiprocessing as mp; print(mp.cpu_count())"
-                OUTPUT_VARIABLE ls_ret)
+set(CMAKE_CXX_STANDARD 11)
 
-message(STATUS "ls output:\n${ls_ret}")
+set(TARGET1 hello)
+set(TARGET2 test_mmu)
+
+add_executable(${TARGET1} hello.cpp)
+
+add_dependencies(${TARGET1} rtldriver)
+target_link_directories(${TARGET1} PUBLIC ${CMAKE_BINARY_DIR}/veridriver)
+target_link_libraries(${TARGET1} librtldriver.so)
 
 
-# add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/tmp-pcode-matlab/knitromatlab_fsolve.p 
-#                     ${CMAKE_BINARY_DIR}/tmp-pcode-matlab/knitromatlab_lsqnonlin.p 
-#                     ${CMAKE_BINARY_DIR}/tmp-pcode-matlab/knitromatlab_mip.p 
-#                     COMMAND ${Matlab_MAIN_PROGRAM} -nodisplay -nodesktop -nosplash -r \"run('${CMAKE_BINARY_DIR}/generate_pcode.m')\;\" 
-#                     WORKING_DIRECTORY ${CMAKE_BINARY_DIR} 
-#                     COMMENT "Generating PCode") 
+add_executable(${TARGET2} test_mmu.cpp)
 
-# add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/tmp-pcode-matlab/knitromatlab_fsolve.p 
-#                     ${CMAKE_BINARY_DIR}/tmp-pcode-matlab/knitromatlab_lsqnonlin.p 
-#                     ${CMAKE_BINARY_DIR}/tmp-pcode-matlab/knitromatlab_mip.p 
-#                     COMMAND ${Matlab_MAIN_PROGRAM} -nodisplay -nodesktop -nosplash -r "run('${CMAKE_BINARY_DIR}/generate_pcode.m');" 
-#                     VERBATIM 
-                    
-#                     WORKING_DIRECTORY ${CMAKE_BINARY_DIR} 
-#                     COMMENT "Generating PCode") 
+add_dependencies(${TARGET2} rtldriver)
+target_link_directories(${TARGET2} PUBLIC ${CMAKE_BINARY_DIR}/veridriver)
+target_link_libraries(${TARGET2} librtldriver.so)

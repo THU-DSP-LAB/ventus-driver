@@ -16,31 +16,20 @@ set(CMAKE_CXX_FLAGS -std=c++11 -Wall -Wextra -Wfatal-errors -Wno-array-bounds
                     -I${CMAKE_SOURCE_DIR}/common
                     -I${CMAKE_SOURCE_DIR}/sim/common
                     )
-
-
-
 execute_process(COMMAND python -c "import multiprocessing as mp; print(mp.cpu_count())"
                 TIMEOUT 2
                 OUTPUT_VARIABLE threads_var
                 OUTPUT_STRIP_TRAILING_WHITESPACE
                 )
 set(VL_FLAGS 
-    --cc ${TOP} --top-module ${TOP} -O2 --language 1800-2009 --assert -Wall -Wpedantic
-    -Wno-DECLFILENAME -Wno-REDEFMACRO -Wno-MODDUP -Wno-UNUSEDSIGNAL 
-    --x-initial unique --x-assign unique
-    ${RTL_SRC}
-    -I${RTL_DIR}
-    -j ${threads_var}
-    --lib-create ${PROJECT}
-    )
-
-# message(${SRCS})
-# message(STATUS ${HEADER})
-# message(${RTL_DIR})
-# message(STATUS ${RTL_SRC})
-# message(${CMAKE_CXX_FLAGS})
-# message(${threads_var})
-# message(STATUS verilator --build ${VL_FLAGS} ${SRCS} -CFLAGS '${CMAKE_CXX_FLAGS}')
+            --cc ${TOP} --top-module ${TOP} -O2 --language 1800-2009 --assert -Wall -Wpedantic
+            -Wno-DECLFILENAME -Wno-REDEFMACRO -Wno-MODDUP -Wno-UNUSEDSIGNAL
+            --x-initial unique --x-assign unique
+            ${RTL_SRC}
+            -I${RTL_DIR}
+            -j ${threads_var}
+            --lib-create ${PROJECT}
+            )
 
 include_directories(${CMAKE_SOURCE_DIR}/common)
 include_directories(${CMAKE_SOURCE_DIR}/include)

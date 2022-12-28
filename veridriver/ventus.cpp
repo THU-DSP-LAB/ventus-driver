@@ -52,7 +52,7 @@
 extern int vt_dev_open(vt_device_h* hdevice){
     if(hdevice == nullptr)
         return -1;
-    
+    std::cout << "hello world from ventus.cpp" << endl;
     *hdevice = new vt_device();
     return 0;
 }

@@ -56,8 +56,7 @@ public:
         #endif
         #ifdef DEBUG_MMU
             device_ = new VMMUtest();
-            
-            
+            std::cout << "Hello, World! from Processor.cpp" << std::endl;
         #endif
         ram_ = nullptr;
         for(int i = 0; i < MAX_BLOCK_PER_SM; i++) { 
@@ -65,6 +64,7 @@ public:
             block_busy_list[i] = 0;
         }
         this->reset();
+
     }
     ~Impl(){
         delete device_;
