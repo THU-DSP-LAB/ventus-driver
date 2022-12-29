@@ -36,7 +36,7 @@ int vt_device::upload(int taskID, inst_len dest_addr, uint64_t size, void *data)
         case 0:
             break;
         case 1:
-            ram_.allocateMemory(roots[taskID], tmp, size);
+            ram_.allocateMemory(roots[taskID], vaddr, size);
             break;
         default:
             break;
@@ -182,7 +182,11 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
     int low = 0;
     int mid = (high + low ) / 2;
     uint64_t value;
-    int flag = 0;
+//    int flag = 0;
+    if(high == 0) {
+        allocAddr_l.push_back(vAddr_info(vaddr, size));
+        return 1;
+    }
     while(low <= high) {
         if(allocAddr_l[mid].vAddr == vaddr) {
             return 0;
@@ -193,7 +197,7 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
             low = mid+1;
         mid=(low+high) / 2;
     }
-    if(flag=0) value=high;
+    value=high;
 
     if((allocAddr_l[value].vAddr + allocAddr_l[value].size) >= vaddr ||
             ((vaddr+size) >= allocAddr_l[value+1].vAddr))

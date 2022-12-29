@@ -21,3 +21,4 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/test.cpp")
     set(CODING_TEST test)
     add_executable(${CODING_TEST} test.cpp)
 endif()
+

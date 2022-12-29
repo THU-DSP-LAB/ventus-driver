@@ -41,4 +41,3 @@ add_custom_target(
     COMMAND verilator --build ${VL_FLAGS} ${SRCS} -CFLAGS '${CMAKE_CXX_FLAGS}' 
     COMMAND echo "libray rtlsim build finished"
     )
-# message(STATUS "library ${PROJECT} build finished")

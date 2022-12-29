@@ -13,10 +13,6 @@ set(CMAKE_CXX_FLAGS -fPIC)
 
 file(GLOB_RECURSE SRCS ./*)
 
-# file(GLOB_RECURSE VERILATOR_SRCS ${CMAKE_SOURCE_DIR}/verilator/*[cpp|h])
-# file(GLOB_RECURSE COMMON_SRCS ${CMAKE_SOURCE_DIR}/common/*[cpp|h])
-# aux_source_directory()
-
 link_directories(${CMAKE_BINARY_DIR}/sim/obj_dir)
 
 add_library(${PROJECT}_static STATIC ${SRCS})
@@ -33,4 +29,3 @@ target_link_libraries(${PROJECT} PUBLIC librtlsim.a)
 set_target_properties(${PROJECT} PROPERTIES OUTPUT_NAME "${PROJECT}")
 set_target_properties(${PROJECT} PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
-# install(TARGETS ${PROJECT} LIBRARY DESTINATION ${PROJECT_SOURCE_DIR}/lib)
