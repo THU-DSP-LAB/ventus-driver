@@ -7,7 +7,10 @@ int search_binary(vector<int>v, int value)
     int low = 0;
     int high = v.size() - 1;
     int mid = (low + high) / 2;
-    while (low <= high) {
+    if (value <= v[low]) return low;
+    if (value >= v[high]) return high;
+
+    while (low < high) {
 
         if (v[mid] == value) {
             return mid;
@@ -24,5 +27,6 @@ int search_binary(vector<int>v, int value)
 }
 int main() {
     vector<int>v{ 8,11,19,23,27,33,45,55,67,98 };
-    cout << search_binary(v, 13);
+    vector<int>x{8};
+    cout << search_binary(x, 4);
 }

@@ -182,7 +182,7 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
     int low = 0;
     int mid = (high + low ) / 2;
     uint64_t value;
-//    int flag = 0;
+
     if(high == 0) {
         allocAddr_l.push_back(vAddr_info(vaddr, size));
         return 1;
