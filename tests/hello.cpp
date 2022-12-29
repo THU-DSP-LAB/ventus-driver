@@ -1,28 +1,28 @@
 #include <iostream>
-#include <cstdint>
+#include<iostream>
+#include<vector>
 using namespace std;
+int search_binary(vector<int>v, int value)
+{
+    int low = 0;
+    int high = v.size() - 1;
+    int mid = (low + high) / 2;
+    while (low <= high) {
 
-typedef void* vt_device_h;
-
-int test(vt_device_h *p) {
-    *p = new int;
-    int *a = new int;
-    *a = 1;
-    *p = a;
-    delete a;
-    return 0;
+        if (v[mid] == value) {
+            return mid;
+        }
+        else if (value < v[mid]) {
+            high = mid-1;
+        }
+        else {
+            low = mid + 1;
+        }
+        mid= (low + high) / 2;
+    }
+    return high;
 }
-
 int main() {
-    cout << "Hello, World!" << endl;
-    vt_device_h p = nullptr;
-    int* b;
-    b = new int;
-    *b = 2;
-    test(&p);
-//    p = b;
-    cout << *b << endl;
-    cout << *(int*)p;
-
-    return 0;
+    vector<int>v{ 8,11,19,23,27,33,45,55,67,98 };
+    cout << search_binary(v, 13);
 }
