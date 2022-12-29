@@ -17,8 +17,7 @@ add_subdirectory(sim)
 add_subdirectory(veridriver)
 add_subdirectory(tests)
 
-set(CODING_TEST test)
-add_executable(${CODING_TEST} test.cpp)
-
-
-#add_subdirectory(tests)
+if(EXISTS "${CMAKE_SOURCE_DIR}/test.cpp")
+    set(CODING_TEST test)
+    add_executable(${CODING_TEST} test.cpp)
+endif()

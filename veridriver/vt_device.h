@@ -42,6 +42,9 @@ struct kernel_info{
 struct vAddr_info{
     uint64_t vAddr;
     uint64_t size;
+    vAddr_info(uint64_t vAddr_in, uint64_t size_in):
+                vAddr(vAddr_in),
+                size(size_in){}
 };
 
 class vt_device {
@@ -102,7 +105,7 @@ public:
     queue<int> excute_all_kernel();
 
 private:
-    bool vAddrAllocated(uint64_t vaddr);
+    int vAddrAllocated(uint64_t vaddr, uint64_t size);
 
 
     Processor processor_;
@@ -112,7 +115,7 @@ private:
     list<kernel_info> kernel_list; ///< list每个元素对应一个任务，每个任务由多个block组成
     vector<uint64_t> roots; ///< 根页表，为了支持每个kernel都有单独的根页表而声明
 
-    list<vAddr_info> allocAddr_l; ///< 保存已经分配过物理地址的虚拟地址空间
+    vector<vAddr_info> allocAddr_l; ///< 保存已经分配过物理地址的虚拟地址空间
 };
 
 class vt_buffer{

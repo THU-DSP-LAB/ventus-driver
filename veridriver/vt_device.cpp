@@ -28,8 +28,20 @@ int vt_device::free_local_mem(int taskID){
 int vt_device::upload(int taskID, inst_len dest_addr, uint64_t size, void *data){
     if(taskID >= roots.size()|| roots[taskID] == 0)
         return -1;
-
-    return ram_.writeDataVirtual(roots[taskID], dest_addr+RODATA_BASE, size, data);
+    uint64_t vaddr = dest_addr+RODATA_BASE;
+    int tmp = vAddrAllocated(vaddr, size);
+    switch (tmp) {
+        case -1:
+            return -1;
+        case 0:
+            break;
+        case 1:
+            ram_.allocateMemory(roots[taskID], tmp, size);
+            break;
+        default:
+            break;
+    }
+    return ram_.writeDataVirtual(roots[taskID], vaddr, size, data);
     
 }
 
@@ -156,6 +168,43 @@ queue<int> vt_device::excute_all_kernel() {
         wait(RUN_DELAY);
     }
     return tmp;
+}
+/**
+ *
+ * @param vaddr
+ * @param size
+ * @return 0:   vAddr has been allocated
+ * @return -1:  vAddr was not allocated and can't allocate
+ * @return 1:   vAddr need to allocate
+ */
+int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
+    int high = allocAddr_l.size();
+    int low = 0;
+    int mid = (high + low ) / 2;
+    uint64_t value;
+    int flag = 0;
+    while(low <= high) {
+        if(allocAddr_l[mid].vAddr == vaddr) {
+            return 0;
+        }
+        else if(value < allocAddr_l[mid].vAddr)
+            high = mid-1;
+        else
+            low = mid+1;
+        mid=(low+high) / 2;
+    }
+    if(flag=0) value=high;
+
+    if((allocAddr_l[value].vAddr + allocAddr_l[value].size) >= vaddr ||
+            ((vaddr+size) >= allocAddr_l[value+1].vAddr))
+        return -1;
+    else {
+        auto iter = allocAddr_l.begin();
+        for(int i=0; i < value; i++)
+            iter++;
+        allocAddr_l.insert(iter, vAddr_info(vaddr, size));
+        return 1;
+    }
 }
 
 //Implementation of class vt_buffer
