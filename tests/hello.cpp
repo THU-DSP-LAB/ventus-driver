@@ -1,5 +1,4 @@
 #include <iostream>
-#include<iostream>
 #include<vector>
 using namespace std;
 int search_binary(vector<int>v, int value)
