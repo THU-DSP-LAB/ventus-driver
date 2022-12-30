@@ -21,7 +21,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 const char* kernel_file = "kernel.bin";
-int test = -1;
+int test = 1;
 uint32_t count = 0;
 int default_taskID = 0;
 
@@ -145,6 +145,7 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
   elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start).count();  
   printf("Total elapsed time: %lg ms\n", elapsed);
 
+  vt_mem_free(device, 0, taskID);
   return 0;
 }
 

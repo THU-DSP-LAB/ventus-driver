@@ -182,12 +182,27 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
     int low = 0;
     int mid = (high + low ) / 2;
     uint64_t value;
-
     if(high == 0) {
         allocAddr_l.push_back(vAddr_info(vaddr, size));
         return 1;
     }
-    while(low <= high) {
+    if(vaddr >= allocAddr_l[high].vAddr ) {
+        if(vaddr >= (allocAddr_l[high].vAddr + allocAddr_l[high].size)) {
+            allocAddr_l.push_back(vAddr_info(vaddr, size));
+            return 1;
+        } else {
+            return -1;
+        }
+    }
+    if(vaddr <= allocAddr_l[low].vAddr) {
+        if((vaddr + size) <= allocAddr_l[low].vAddr) {
+            allocAddr_l.emplace(allocAddr_l.begin(), vAddr_info(vaddr, size));
+            return 1;
+        } else {
+            return  -1;
+        }
+    }
+    while(low < high) {
         if(allocAddr_l[mid].vAddr == vaddr) {
             return 0;
         }
@@ -199,6 +214,8 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
     }
     value=high;
 
+
+
     if((allocAddr_l[value].vAddr + allocAddr_l[value].size) >= vaddr ||
             ((vaddr+size) >= allocAddr_l[value+1].vAddr))
         return -1;
@@ -206,7 +223,7 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
         auto iter = allocAddr_l.begin();
         for(int i=0; i < value; i++)
             iter++;
-        allocAddr_l.insert(iter, vAddr_info(vaddr, size));
+        allocAddr_l.emplace(iter, vAddr_info(vaddr, size));
         return 1;
     }
 }
