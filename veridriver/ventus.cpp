@@ -194,6 +194,7 @@ extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint6
     }
     printf("\n");*/
 
+
     err = vt_copy_to_dev(buffer, kernel_base_addr + offset, chunk_size, taskID);
     if (err != 0) {
       vt_buf_free(buffer);

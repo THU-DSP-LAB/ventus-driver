@@ -13,7 +13,11 @@ int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr, int taskID){
         roots.push_back(rootPage);
     }
     // 为device申请物理空间
-    ram_.allocateMemory(roots[taskID], *dev_addr, size);
+    int err = ram_.allocateMemory(roots[taskID], *dev_addr, size);
+    if(!err) {
+        cout << "device allocate physical memory failed!" << endl;
+        return -1;
+    }
     return 0;
 }
 
@@ -36,7 +40,7 @@ int vt_device::upload(int taskID, inst_len dest_addr, uint64_t size, void *data)
         case 0:
             break;
         case 1:
-            ram_.allocateMemory(roots[taskID], vaddr, size);
+            alloc_local_mem(size, &vaddr, taskID);
             break;
         default:
             break;

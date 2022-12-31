@@ -235,7 +235,7 @@ int create_test_kernel_bin(int taskID, size_t value) {
     int block_size = 64;
     for (int i = 0; i < count_block; ++i) {
         for (int j = 0; j < block_size; ++j) {
-            fout << shuffle(i*count_block + block_size, value);
+            fout << i*count_block + block_size;
         }
     }
     fout.close();
@@ -245,7 +245,7 @@ int create_test_kernel_bin(int taskID, size_t value) {
 int main(int argc, char *argv[]) {
 
   size_t value = 2;
-  kernel_arg.src_addr = RODATA_BASE;
+  kernel_arg.src_addr = 0x20000000;
   kernel_arg.dst_addr = RWDATA_BASE;
   
   // parse command arguments
@@ -295,7 +295,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (1 == test || -1 == test) {
-
+//      vt_mem_free(device, 0, default_taskID);
       create_test_kernel_bin(default_taskID, 0x0badf00d40ff40ff);
     // upload program
     /// @note 写到了vt_device的成员ram_里
