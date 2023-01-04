@@ -166,7 +166,7 @@ public:
     int writeData(uint64_t addr, uint64_t length, const void *data){
         for(auto &iter: *blocks){
             if(addr >= iter.addr &&
-            addr + length <= iter.addr + iter.size){ // valid address
+               addr + length <= iter.addr + iter.size){ // valid address
                 if(iter.pages== nullptr){
                     printf("No pages in this block: 0x%016lx\n", addr);
                     return -1;
@@ -201,7 +201,7 @@ public:
     int readData(uint64_t addr, uint64_t length, void *data){
         for(auto &iter: *blocks){
             if(addr >= iter.addr &&
-            addr + length <= iter.addr + iter.size){
+               addr + length <= iter.addr + iter.size){
                 if(iter.pages== nullptr){
                     printf("No pages in this block: 0x%016lx\n", addr);
                     return -1;
