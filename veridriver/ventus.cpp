@@ -112,7 +112,13 @@ extern int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_vaddr,
         return -1;
     vt_device *device = (vt_device*) hdevice;
     return device->alloc_local_mem(size, dev_vaddr, taskID);
+}
 
+extern int vt_mem_alloc(vt_device_h hdevice, uint64_t* dev_vaddr, int taskID) {
+    if( hdevice == nullptr )
+        return -1;
+    vt_device *device = (vt_device*) hdevice;
+    return device->alloc_local_mem(dev_vaddr, taskID);
 }
 
 extern int vt_mem_free(vt_device_h hdevice, uint64_t dev_vaddr, int taskID) {

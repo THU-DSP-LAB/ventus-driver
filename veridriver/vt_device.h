@@ -68,6 +68,8 @@ public:
      * @return int 
      */
     int alloc_local_mem(inst_len size, inst_len *dev_maddr, int taskID);
+    int alloc_local_mem(inst_len *dev_maddr, int taskID);
+
     /**
      * @brief 释放分配的空间，释放根页表所指向的空间
      * @param  taskID    要释放的内存空间对应的任务ID  

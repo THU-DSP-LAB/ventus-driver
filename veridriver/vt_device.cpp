@@ -6,7 +6,7 @@
 host_port_t* input_sig;
 
 int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr, int taskID){
-    if(size <= 0 || dev_addr == nullptr || taskID > roots.size()) 
+    if(size <= 0 || dev_addr == nullptr || taskID > roots.size())
         return -1;
     if(roots.size() == taskID) {
         uint64_t rootPage = ram_.createRootPageTable();
@@ -21,6 +21,16 @@ int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr, int taskID){
     return 0;
 }
 
+int vt_device::alloc_local_mem(inst_len *dev_addr, int taskID){
+    if(dev_addr == nullptr || taskID > roots.size())
+        return -1;
+    if(roots.size() == taskID) {
+        uint64_t rootPage = ram_.createRootPageTable();
+        roots.push_back(rootPage);
+    }
+    return 0;
+}
+
 int vt_device::free_local_mem(int taskID){ 
     if(taskID >= roots.size() || roots[taskID] == 0)
         return -1;
@@ -30,12 +40,13 @@ int vt_device::free_local_mem(int taskID){
 }
 
 int vt_device::upload(int taskID, inst_len dest_addr, uint64_t size, void *data){
-    if(taskID >= roots.size()|| roots[taskID] == 0)
+    if(taskID >= roots.size() || roots[taskID] == 0)
         return -1;
     uint64_t vaddr = dest_addr+RODATA_BASE;
     int tmp = vAddrAllocated(vaddr, size);
     switch (tmp) {
         case -1:
+            std::cout << "vAddr was not allocated and can't allocate for lack of memory size" << std::endl;
             return -1;
         case 0:
             break;
@@ -217,8 +228,6 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
         mid=(low+high) / 2;
     }
     value=high;
-
-
 
     if((allocAddr_l[value].vAddr + allocAddr_l[value].size) >= vaddr ||
             ((vaddr+size) >= allocAddr_l[value+1].vAddr))

@@ -22,9 +22,9 @@
 #include <stdio.h>
 #include <queue>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+//#ifdef __cplusplus
+//extern "C" {
+//#endif
 
 typedef void* vt_device_h;
 
@@ -72,6 +72,7 @@ void* vt_host_ptr(vt_buffer_h hbuffer);
 /// allocate device memory and return address
 int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_vaddr, int taskID);
 
+int vt_mem_alloc(vt_device_h hdevice, uint64_t* dev_vaddr, int taskID);
 /// NEED TO DEFINE
 /// release device memory
 int vt_mem_free(vt_device_h hdevice, uint64_t dev_vaddr, int taskID);
@@ -114,8 +115,8 @@ int vt_alloc_dev_mem(vt_device_h hdevice, uint64_t size, uint64_t* dev_maddr);
 int vt_alloc_shared_mem(vt_device_h hdevice, uint64_t size, vt_buffer_h* hbuffer);
 int vt_buf_release(vt_buffer_h hbuffer);
 
-#ifdef __cplusplus
-}
-#endif
+//#ifdef __cplusplus
+//}
+//#endif
 
 #endif // __VT_DRIVER_H__

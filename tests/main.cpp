@@ -246,7 +246,7 @@ int main(int argc, char *argv[]) {
 
   size_t value = 2;
   kernel_arg.src_addr = 0x20000000;
-  kernel_arg.dst_addr = RWDATA_BASE;
+  kernel_arg.dst_addr = 0x40000000;
   
   // parse command arguments
   parse_args(argc, argv);
@@ -270,11 +270,9 @@ int main(int argc, char *argv[]) {
   std::cout << "buffer size: " << buf_size << " bytes" << std::endl;
 
   // allocate device memory
-  /// @note deive的内存空间，函数内部调用了成员的函数mem_allocator_::allocate()
-  /// 
-  RT_CHECK(vt_mem_alloc(device, buf_size, &kernel_arg.src_addr, default_taskID));
+//  RT_CHECK(vt_mem_alloc(device, buf_size, &kernel_arg.src_addr, default_taskID));
   // kernel_arg.src_addr = value;
-  RT_CHECK(vt_mem_alloc(device, buf_size, &kernel_arg.dst_addr, default_taskID));
+  RT_CHECK(vt_mem_alloc(device,&kernel_arg.dst_addr, default_taskID));
   // kernel_arg.dst_addr = value;
 
   kernel_arg.count = num_points;
