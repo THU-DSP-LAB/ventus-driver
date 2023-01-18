@@ -41,11 +41,13 @@
 //#include <VT_config.h>
 // sim/common
 #include <vt_memory.h>
+#include <MemConfig.h>
 // #include <util.h>
-#include <processor.h>
+#include "processor.h"
 
 #define RAM_PAGE_SIZE 4096
 
+using namespace ventus;
 
 
 /// open the device and connect to it
@@ -142,11 +144,11 @@ extern int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t si
     return buffer->device()->download(0, dev_vaddr, buffer->data(), size);
 }
 
-extern int vt_start(vt_device_h hdevice, int taskID, int num_blocks) {
+extern int vt_start(vt_device_h hdevice, int taskID, int num_blocks, host_port_t* input_port) {
     if(hdevice == nullptr)
         return -1;
     auto device = (vt_device *) hdevice;
-    device->start(taskID, num_blocks);
+    device->start(taskID, input_port, num_blocks);
     return 0;
 }
 extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
@@ -171,7 +173,7 @@ extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint6
     return -1;
 
   uint32_t buffer_transfer_size = 65536; ///< 64 KB
-  uint64_t kernel_base_addr;
+  uint64_t kernel_base_addr = GLOBALMEM_BASE;
 //   err = vt_dev_caps(device, VT_CAPS_KERNEL_BASE_ADDR, &kernel_base_addr);
 //   if (err != 0)
 //     return -1;

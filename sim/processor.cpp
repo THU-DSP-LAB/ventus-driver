@@ -56,7 +56,7 @@ public:
         #endif
         #ifdef DEBUG_MMU
             device_ = new VMMUtest();
-            std::cout << "Hello, World! from Processor.cpp" << std::endl;
+            std::cout << "Hello, World! from Processor.cpp, Impl() construct function" << std::endl;
         #endif
         ram_ = nullptr;
         for(int i = 0; i < MAX_BLOCK_PER_SM; i++) { 
@@ -92,6 +92,8 @@ public:
             } else 
                 break;
         }
+
+         std::cout << "checkpoint 1" << std::endl;
         // 经过最大等待时间仍然没有空闲block
         if(delay == RUN_DELAY) {
         #ifdef DEBUG_PROC
@@ -99,11 +101,17 @@ public:
         #endif
             return -1;
         }
-
+        std::cout << MAX_BLOCK_PER_SM << std::endl;
         for(int i = 0; i < MAX_BLOCK_PER_SM; i++) {
+            while(device_->io_host_req_ready != true) {
+                std::cout << "checkpoint 2" << std::endl;
+                this->tick();
+            }
             if(block_busy_list[i] == 0) {
-                
+                std::cout << "checkpoint 3" << std::endl;
+                std::cout << (inst_len)(kernel_id<<(int)ceil(log2(NUM_SM*MAX_BLOCK_PER_SM)) | i)<<(int)ceil(log2(NUM_SM)) << std::endl;
                 device_->io_host_req_bits_host_wg_id = (inst_len)(kernel_id<<(int)ceil(log2(NUM_SM*MAX_BLOCK_PER_SM)) | i)<<(int)ceil(log2(NUM_SM));
+                std::cout << "checkpoint 4" << std::endl;
                 device_->io_host_req_bits_host_num_wf = input_sig->host_req_num_wf;
                 device_->io_host_req_bits_host_wf_size = input_sig->host_req_wf_size; 
                 device_->io_host_req_bits_host_start_pc = input_sig->host_req_start_pc;
@@ -114,9 +122,11 @@ public:
                 device_->io_host_req_bits_host_vgpr_size_per_wf = input_sig->host_req_vgpr_size_per_wf;
                 device_->io_host_req_bits_host_sgpr_size_per_wf = input_sig->host_req_sgpr_size_per_wf;
                 device_->io_host_req_bits_host_gds_baseaddr = input_sig->host_req_gds_baseaddr;
-
+                device_->io_host_req_valid = 1;
+                std::cout << "checkpoint 5" << std::endl;
                 this->tick();
                 block_busy_list[i] = 1;
+                std::cout << "checkpoint 0" << std::endl;
                 return i;// 返回该block在GPGPU中运行实际对应的标号
             }
         }
@@ -148,15 +158,17 @@ private:
     void tick(){
         /// 读取TLB_A和TLB_D的值并接到GPGPU,
         /// @todo: 改成硬件对应的名称
+        std::cout << "checkpoint 5.5" << std::endl;
         {
             get_ram_bits_port();
         }
+        std::cout << "checkpoint 6" << std::endl;
         //给GPGPU和内存控制器的时钟赋值并实例化。
         device_->clock = 0;
         this->eval(device_->clock);
         device_->clock = 1;
         this->eval(device_->clock);
-
+        std::cout << "checkpoint 7" << std::endl;
         // 每个周期读取GPGPU的输出
         if(device_->io_host_rsp_valid) {
             device_->io_host_rsp_ready = 1;
@@ -165,25 +177,35 @@ private:
             finished_block_queue.push(finished_block);
             block_busy_list[finished_block] = 0;
         }
-        
+        std::cout << "checkpoint 8" << std::endl;
 
         /// @todo ram的tick实现
     }
 
     void get_ram_bits_port() {
+        std::cout << "checkpoint 5.51" << std::endl;
         mem_ctrl.req->address = device_->io_out_a_bits_address;
         mem_ctrl.req->opcode = device_->io_out_a_bits_opcode;
         mem_ctrl.req->size = device_->io_out_a_bits_opcode;
         mem_ctrl.req->source = device_->io_out_a_bits_source;
         mem_ctrl.req->mask = device_->io_out_a_bits_mask;
+        std::cout << "checkpoint 5.52" << std::endl;
+        if(mem_ctrl.req->data == nullptr)
+            mem_ctrl.req->data = new uint64_t;
         *(mem_ctrl.req->data) = device_->io_out_a_bits_data;
+        std::cout << "checkpoint 5.53" << std::endl;
         mem_ctrl.req->valid = device_->io_out_a_valid;
         device_->io_out_a_ready = mem_ctrl.req->ready;
 
+        std::cout << "checkpoint 5.54" << std::endl;
         device_->io_out_d_bits_opcode = mem_ctrl.rsp->opcode;
         device_->io_out_d_bits_size = mem_ctrl.rsp->size;
         device_->io_out_d_bits_source = mem_ctrl.rsp->source;
+        std::cout << "checkpoint 5.55" << std::endl;
+        if(mem_ctrl.rsp->data == nullptr)
+            std::cout << "response from mem is nullptr" << std::endl;
         device_->io_out_d_bits_data = *(mem_ctrl.rsp->data);
+        std::cout << "checkpoint 5.56" << std::endl;
         device_->io_out_d_valid = mem_ctrl.rsp->valid;
         mem_ctrl.rsp->ready = device_->io_out_d_ready;
     }
@@ -252,8 +274,7 @@ private:
     int block_busy_list[MAX_BLOCK_PER_SM];
     int block_finish_list[MAX_BLOCK];
     std::queue<int> finished_block_queue;
-    TLBundleA TLBreqA;
-    TLBundleD TLBrspD;///< GPGPU和ram之间的接口信号
+
     Controller mem_ctrl;
 
 };
@@ -277,8 +298,7 @@ std::queue<int> Processor::wait(uint64_t cycle) {
     return impl_->wait(cycle);
 }
 
+void ventus::test_proc() {
+    std::cout << "hello world from processor.cpp, function test_proc()" << std::endl;
+}
 
-// int main() {
-//     std::cout << "Hello, World! from Processor.cpp" << std::endl;
-//     return 0;
-// }

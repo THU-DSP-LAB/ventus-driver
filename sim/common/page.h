@@ -98,7 +98,9 @@ public:
         }
         uint8_t *out = (uint8_t *)data;
         for(uint64_t i = 0ull; i < length && base + i < size; i++){
+            std::cout << "checkpoint 5.59" << std::endl;
             out[i] = pages->data[base + i];
+            std::cout << "checkpoint 5.6" << std::endl;
         }
         return 0;
     }

@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <queue>
 
+#include "processor.h"
 //#ifdef __cplusplus
 //extern "C" {
 //#endif
@@ -30,18 +31,6 @@ typedef void* vt_device_h;
 
 typedef void* vt_buffer_h;
 
-// device parameters
-#define   HOST_REQ_WG_ID            
-#define   HOST_REQ_NUM_WF
-#define   HOST_REQ_WF_SIZE
-#define   HOST_REQ_START_PC
-#define   HOST_REQ_VGPR_SIZE_TOTAL
-#define   HOST_REQ_SGPR_SIZE_TOTAL
-#define   HOST_REQ_LDS_SIZE_TOTAL
-#define   HOST_REQ_GDS_SIZE_TOTAL
-#define   HOST_REQ_VGPR_SIZE_PER_WF
-#define   HOST_REQ_SGPR_SIZE_PER_WF
-#define   HOST_REQ_GDS_BASEADDR
 
 #define MAX_TIMEOUT               (60*60*1000)   // 1hr 
 
@@ -87,7 +76,7 @@ int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size, int
 
 /// NEED TO DEFINE
 /// Start device execution
-int vt_start(vt_device_h hdevice, int taskID, int num_blocks);
+int vt_start(vt_device_h hdevice, int taskID, int num_blocks, ventus::host_port_t* input_port);
 
 /// NEED TO DEFINE
 /// Wait for device ready with milliseconds timeout

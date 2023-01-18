@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <queue>
 #include "vt_memory.h"
+#include "vt_config.h"
 
 
 #define INSTSIZE64
@@ -39,9 +40,6 @@ typedef struct {
     inst_len host_req_vgpr_size_per_wf;
     inst_len host_req_sgpr_size_per_wf;
     inst_len host_req_gds_baseaddr;
-    bool host_req_valid;
-    // bool host_req_ready;
-    bool host_rsp_ready;
 } host_port_t;///< GPGPU和主机之间进行配置参数传递的接口
 
 // class Memory;
@@ -60,4 +58,10 @@ private:
     class Impl;
     Impl* impl_;
 };
+
+//    void test_proc() {
+//        std::cout << "hello world from processor.cpp, function test_proc()" << std::endl;
+//    }
+////
+ void test_proc();
 }

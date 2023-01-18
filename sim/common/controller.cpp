@@ -11,8 +11,14 @@ public:
     uint64_t *data;
     uint8_t ready; // controller -> gpu, output
     uint8_t valid; // gpu -> controller, input
-//    TLBundleA(uint32_t num_thread){  }
-//    ~TLBundleA(){  }
+    TLBundleA(){
+        std::cout << "checkpoint 5.54" << std::endl;
+        this->data = new uint64_t;
+        std::cout << "checkpoint 5.54" << std::endl;
+    }
+    ~TLBundleA(){
+        delete data;
+    }
 };
 
 class TLBundleD{ // rsp
@@ -23,8 +29,14 @@ public:
     uint64_t *data;
     uint8_t ready; // gpu -> controller, input
     uint8_t valid; // controller -> gpu, output
-//    TLBundleD(uint32_t num_thread){  }
-//    ~TLBundleD(){  }
+    TLBundleD(){
+        std::cout << "checkpoint 5.54" << std::endl;
+        this->data = new uint64_t ;
+        std::cout << "checkpoint 5.54" << std::endl;
+    }
+    ~TLBundleD(){
+        delete data;
+    }
 };
 
 class Controller{

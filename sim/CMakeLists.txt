@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 set(PROJECT rtlsim)
+set(PROJECT2 rtlsim2)
 PROJECT(${PROJECT})
 
 set(CMAKE_CXX_STANDARD 11)
@@ -7,7 +8,7 @@ set(CMAKE_CXX_STANDARD 11)
 set(TOP MMUtest)
 set(RTL_DIR ${CMAKE_SOURCE_DIR}/rtl)
 file(GLOB_RECURSE SRCS "*.cpp" "${CMAKE_SOURCE_DIR}/common/*.cpp")
-file(GLOB_RECURSE HEADER "*.h" "${CMAKE_SOURCE_DIR}/include/*.h" "${CMAKE_SOURCE_DIR}/common/*.h")
+# file(GLOB_RECURSE HEADER "*.h" "${CMAKE_SOURCE_DIR}/include/*.h" "${CMAKE_SOURCE_DIR}/common/*.h")
 file(GLOB RTL_SRC "${RTL_DIR}/${TOP}.v")
 
 set(CMAKE_CXX_FLAGS -std=c++11 -Wall -Wextra -Wfatal-errors -Wno-array-bounds
@@ -31,13 +32,31 @@ set(VL_FLAGS
             --lib-create ${PROJECT}
             )
 
+set(VL_FLAGS2
+        --cc ${TOP} --top-module ${TOP} -O2 --language 1800-2009 --assert -Wall -Wpedantic
+        -Wno-DECLFILENAME -Wno-REDEFMACRO -Wno-MODDUP -Wno-UNUSEDSIGNAL
+        --x-initial unique --x-assign unique
+        ${RTL_SRC}
+        -I${RTL_DIR}
+        -j ${threads_var}
+        --lib-create ${PROJECT2}
+        )
+
 include_directories(${CMAKE_SOURCE_DIR}/common)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/sim/common)
 
+
 add_custom_target(
     ${PROJECT}
     ALL
-    COMMAND verilator --build ${VL_FLAGS} ${SRCS} -CFLAGS '${CMAKE_CXX_FLAGS}' 
+    COMMAND verilator --build ${VL_FLAGS} ${SRCS}  -CFLAGS '${CMAKE_CXX_FLAGS}'
     COMMAND echo "libray rtlsim build finished"
     )
+
+add_custom_target(
+        ${PROJECT2}
+        ALL
+        COMMAND verilator --build ${VL_FLAGS2} -CFLAGS '${CMAKE_CXX_FLAGS}'
+        COMMAND echo "libray rtlsim2 build finished"
+)

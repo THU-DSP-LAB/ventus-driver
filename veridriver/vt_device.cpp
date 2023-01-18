@@ -2,8 +2,7 @@
 #include <stdlib.h>
 #include "vt_utils.h"
 #include "MemConfig.h"
-
-host_port_t* input_sig;
+//#include "processor.h"
 
 int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr, int taskID){
     if(size <= 0 || dev_addr == nullptr || taskID > roots.size())
@@ -42,7 +41,7 @@ int vt_device::free_local_mem(int taskID){
 int vt_device::upload(int taskID, inst_len dest_addr, uint64_t size, void *data){
     if(taskID >= roots.size() || roots[taskID] == 0)
         return -1;
-    uint64_t vaddr = dest_addr+RODATA_BASE;
+    uint64_t vaddr = dest_addr;
     int tmp = vAddrAllocated(vaddr, size);
     switch (tmp) {
         case -1:
@@ -76,7 +75,7 @@ int vt_device::download(int taskID, uint64_t dest_data_addr, void *src_addr, uin
  * @param num_block 这个任务由多少个block组成
  * @return int 0
  */
-int vt_device::start(int kernel_id, int num_block){
+int vt_device::start(int kernel_id,  host_port_t* input_port, int num_block){
     // host_port_t* input_per_block;
     // *input_per_block = *input_sig;
     for (auto it : kernel_list) {
@@ -98,14 +97,18 @@ int vt_device::start(int kernel_id, int num_block){
     // // 如果存在，则重置
     // else 
     //     kernel_list[kernel_id].clear();
-    
+
+
+
     for(int i = 0; i < num_block; i++) {
-        if(last_task_.valid()){
-            kernel_list.back().blk_list.emplace(last_task_.get(), 0);
-        }
-        last_task_ = std::async (std::launch::async, [&]() -> int {
-            return processor_.run(input_sig, kernel_id);
-        });
+        int tmp = processor_.run(input_port, kernel_id);
+        return tmp;
+//        if(last_task_.valid()){
+//            kernel_list.back().blk_list.emplace(last_task_.get(), 0);
+//        }
+//        last_task_ = std::async (std::launch::async, [&]() -> int {
+//            return processor_.run(input_sig, kernel_id);
+//        });
     }
     return 0;
 }
@@ -193,15 +196,15 @@ queue<int> vt_device::excute_all_kernel() {
  * @return 1:   vAddr need to allocate
  */
 int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
-    int high = allocAddr_l.size();
+    int high = allocAddr_l.size() == 0 ? 0 : allocAddr_l.size() - 1;
     int low = 0;
     int mid = (high + low ) / 2;
     uint64_t value;
-    if(high == 0) {
+    if(allocAddr_l.size() == 0) {
         allocAddr_l.push_back(vAddr_info(vaddr, size));
         return 1;
     }
-    if(vaddr >= allocAddr_l[high].vAddr ) {
+    if(vaddr > allocAddr_l[high].vAddr ) {
         if(vaddr >= (allocAddr_l[high].vAddr + allocAddr_l[high].size)) {
             allocAddr_l.push_back(vAddr_info(vaddr, size));
             return 1;
@@ -209,7 +212,7 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
             return -1;
         }
     }
-    if(vaddr <= allocAddr_l[low].vAddr) {
+    if(vaddr < allocAddr_l[low].vAddr) {
         if((vaddr + size) <= allocAddr_l[low].vAddr) {
             allocAddr_l.emplace(allocAddr_l.begin(), vAddr_info(vaddr, size));
             return 1;
@@ -217,11 +220,11 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
             return  -1;
         }
     }
-    while(low < high) {
-        if(allocAddr_l[mid].vAddr == vaddr) {
+    while(low <= high) {
+        if(allocAddr_l[mid].vAddr == vaddr && allocAddr_l[mid].size >= size) {
             return 0;
         }
-        else if(value < allocAddr_l[mid].vAddr)
+        else if(vaddr < allocAddr_l[mid].vAddr)
             high = mid-1;
         else
             low = mid+1;
@@ -230,7 +233,8 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
     value=high;
 
     if((allocAddr_l[value].vAddr + allocAddr_l[value].size) >= vaddr ||
-            ((vaddr+size) >= allocAddr_l[value+1].vAddr))
+            (((vaddr+size) >= allocAddr_l[value+1].vAddr) && (value != allocAddr_l.size() - 1))
+            )
         return -1;
     else {
         auto iter = allocAddr_l.begin();
