@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 11)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/common)
 include_directories(${CMAKE_SOURCE_DIR}/sim)
-include_directories(${CMAKE_SOURCE_DIR}/sim/common)
+include_directories(${CMAKE_SOURCE_DIR}/sim/page_table)
 
 set(CMAKE_CXX_FLAGS -fPIC)
 

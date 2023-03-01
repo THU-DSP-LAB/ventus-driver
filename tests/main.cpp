@@ -233,7 +233,7 @@ int run_kernel_test(const kernel_arg_t& kernel_arg,
 /// 生成一个随机的kernel.bin文件，用于kernel test
 /// \param taskID
 /// \return
-int create_test_kernel_bin(int taskID, size_t value) {
+void create_test_kernel_bin(int taskID, size_t value) {
     std::ofstream fout(kernel_file);
     int count_block = 64;
     int block_size = 64;
@@ -243,7 +243,6 @@ int create_test_kernel_bin(int taskID, size_t value) {
         }
     }
     fout.close();
-
 }
 
 int main(int argc, char *argv[]) {

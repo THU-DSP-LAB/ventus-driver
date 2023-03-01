@@ -29,7 +29,7 @@
 #include <future>
 #include <list>
 #include <chrono>
-// driver/common
+// driver/page_table
 #include <ventus.h>
 
 #include <vt_device.h>
@@ -39,7 +39,7 @@
 #include <vt_utils.h>
 
 //#include <VT_config.h>
-// sim/common
+// sim/page_table
 #include <vt_memory.h>
 #include <MemConfig.h>
 // #include <util.h>
@@ -54,7 +54,7 @@ using namespace ventus;
 extern int vt_dev_open(vt_device_h* hdevice){
     if(hdevice == nullptr)
         return -1;
-    std::cout << "hello world from ventus.cpp" << endl;
+    PCOUT_INFO << "vt_dev_open : hello world from ventus.cpp" << endl;
     *hdevice = new vt_device();
     return 0;
 }
@@ -116,14 +116,14 @@ extern int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_vaddr,
     return device->alloc_local_mem(size, dev_vaddr, taskID);
 }
 
-extern int vt_mem_alloc(vt_device_h hdevice, uint64_t* dev_vaddr, int taskID) {
+extern int vt_mem_alloc(vt_device_h hdevice, int taskID) {
     if( hdevice == nullptr )
         return -1;
     vt_device *device = (vt_device*) hdevice;
-    return device->alloc_local_mem(dev_vaddr, taskID);
+    return device->alloc_local_mem(taskID);
 }
 
-extern int vt_mem_free(vt_device_h hdevice, uint64_t dev_vaddr, int taskID) {
+extern int vt_mem_free(vt_device_h hdevice, int taskID) {
     if(hdevice == nullptr) 
         return -1;
     vt_device *device = (vt_device*) hdevice;

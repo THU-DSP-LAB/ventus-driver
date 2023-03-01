@@ -1,6 +1,10 @@
 #include <iostream>
-#include<vector>
+#include <vector>
+
+#include "testlib.h"
+
 using namespace std;
+
 int search_binary(vector<int>v, int value)
 {
     int low = 0;
@@ -24,11 +28,17 @@ int search_binary(vector<int>v, int value)
     }
     return high;
 }
+
 int main() {
-    vector<int>v{ 8,11,19,23,27,33,45,55,67,98 };
+    //binary search
+/*    vector<int>v{ 8,11,19,23,27,33,45,55,67,98 };
     vector<int>x{8};
     x.insert(x.begin(), 3);
     cout << *(x.end() -1 ) << endl;
     for(auto it : x ) cout << it <<endl;
-    cout << search_binary(x, 4);
+    cout << search_binary(x, 4);*/
+
+
+    Processor tmp;
+
 }

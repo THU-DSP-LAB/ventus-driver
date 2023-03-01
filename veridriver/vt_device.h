@@ -50,8 +50,7 @@ struct vAddr_info{
 class vt_device {
 public:
     vt_device()
-        :ram_(RAM_RANGE),
-         processor_(){
+        :ram_(RAM_RANGE){
             processor_.attach_ram(&ram_);
             test_proc();
             // list<unordered_map<int, bool>> task_by_block_l;
@@ -69,7 +68,7 @@ public:
      * @return int 
      */
     int alloc_local_mem(inst_len size, inst_len *dev_maddr, int taskID);
-    int alloc_local_mem(inst_len *dev_maddr, int taskID);
+    int alloc_local_mem(int taskID);
 
     /**
      * @brief 释放分配的空间，释放根页表所指向的空间

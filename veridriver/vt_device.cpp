@@ -20,8 +20,8 @@ int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr, int taskID){
     return 0;
 }
 
-int vt_device::alloc_local_mem(inst_len *dev_addr, int taskID){
-    if(dev_addr == nullptr || taskID > roots.size())
+int vt_device::alloc_local_mem( int taskID){
+    if(taskID > roots.size())
         return -1;
     if(roots.size() == taskID) {
         uint64_t rootPage = ram_.createRootPageTable();
@@ -129,9 +129,10 @@ int vt_device::wait(uint64_t time){
             if (status == std::future_status::ready || timeout-- == 0)
                 break;
         }
-    }
-    std::queue<int> finished_block = processor_.wait(time);
+    }            // 如果正在遍历的任务的所有block都完成，则将该任务记录下来并删除，
     // 根据GPGPU返回的block完成情况更新任务队列，将已完成的block ID与保存的list中的block ID比较
+
+    std::queue<int> finished_block = processor_.wait(time);
     while(!finished_block.empty()) {
         bool block_legal = false;
         for(auto it=kernel_list.begin();it != kernel_list.end(); it++) {
@@ -140,7 +141,6 @@ int vt_device::wait(uint64_t time){
                 finished_block.pop();
                 block_legal = true;
 
-            // 如果正在遍历的任务的所有block都完成，则将该任务记录下来并删除，
                 bool task_all_block_finished = true;
                 for(auto& it_map : it->blk_list) {
                     if(it_map.second == false) {

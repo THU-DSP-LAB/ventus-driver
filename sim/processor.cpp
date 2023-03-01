@@ -16,7 +16,7 @@
  * <tr><td>2022-11-16 <td>1.0     <td>yangzexia     <td>创建
  * </table>
  */
-#define DEBUG_MMU
+
 
 #include "processor.h"
 #include "vt_utils.h"
@@ -24,11 +24,13 @@
 
 #include <verilated.h>
 #ifdef  DEBUG_GPGPU
-    #include <VVentus.h>
+    #include "VVentus.h"
 #endif
 #ifdef DEBUG_MMU
     #include "VMMUtest.h"
 #endif
+
+
 
 #include "vt_memory.h"
 #include "controller.cpp"
@@ -56,14 +58,16 @@ public:
         #endif
         #ifdef DEBUG_MMU
             device_ = new VMMUtest();
-            std::cout << "Hello, World! from Processor.cpp, Impl() construct function" << std::endl;
+            PCOUT_INFO << "Hello, World! from Processor.cpp, Impl() construct function" << std::endl;
         #endif
         ram_ = nullptr;
         for(int i = 0; i < MAX_BLOCK_PER_SM; i++) { 
             block_finish_list[i] = 0;
             block_busy_list[i] = 0;
         }
+        PCOUT_INFO << "Impl() construct function : before reset" << std::endl;
         this->reset();
+        PCOUT_INFO << "Impl() construct function : after reset" << std::endl;
 
     }
     ~Impl(){
@@ -138,10 +142,56 @@ public:
 
     }
 
+    std::queue<int> wait(uint64_t cycle){
+        for(int i = 0; i < cycle; i++){
+            int all_idle = 1;
+            for(int j = 0; j < MAX_BLOCK_PER_SM; j++) {
+                if(block_busy_list[j] == 1) {
+                    all_idle = 0;
+                    break;
+                }
+            }
+            if(all_idle)
+                break;
+            this->tick();
+        }
+        // 返回当前已完成的所有block的id
+        std::queue<int> tmp = finished_block_queue;
+        for(int i = 0; i < finished_block_queue.size(); i++)
+            finished_block_queue.pop();
+        return tmp;
+    }
+    /**
+     * @brief 是否所有block都分配了任务
+     * @return true 所有block都在忙
+     * @return false 有block空闲
+     */
+    bool all_block_busy() {
+        bool all_busy_flag = 1;
+        for(int i = 0; i < MAX_BLOCK; i++) {
+            if(block_busy_list[i] == 0)
+                all_busy_flag = 0;
+        }
+        return all_busy_flag;
+    }
+    /**
+     * @deprecated
+     * @brief 返回已完成的block的ID
+     * @return int
+     */
+    int finished_block(){
+        if(!finished_block_queue.empty())
+            finished_block_queue.pop();
+        return -1;
+    }
+
+
 private:
     void reset(){
         device_->reset = 1;
+        PCOUT_INFO << "Impl::reset() : before reset mem_ctrl" << std::endl;
         mem_ctrl.controller_reset();
+        PCOUT_INFO << "Impl::reset() : after reset mem_ctrl" << std::endl;
         for(int i = 0; i < RESET_DELAY; i++){
             device_->clock = 0;
             device_->eval();
@@ -217,52 +267,7 @@ private:
      * @brief 等待cycle个周期，如果所有任务提前完成，则提前返回
      * @param  cycle    等待的周期数
      */
-public:
-    std::queue<int> wait(uint64_t cycle){
-        for(int i = 0; i < cycle; i++){
-            int all_idle = 1;
-            for(int j = 0; j < MAX_BLOCK_PER_SM; j++) {
-                if(block_busy_list[j] == 1) {
-                    all_idle = 0;
-                    break;
-                }
-            }
-            if(all_idle) 
-                break;
-            this->tick();
-        }
-        // 返回当前已完成的所有block的id
-        std::queue<int> tmp = finished_block_queue;
-        for(int i = 0; i < finished_block_queue.size(); i++)
-            finished_block_queue.pop();
-        return tmp;
-    }
-    /**
-     * @brief 是否所有block都分配了任务
-     * @return true 所有block都在忙
-     * @return false 有block空闲
-     */
-    bool all_block_busy() {
-        bool all_busy_flag = 1;
-        for(int i = 0; i < MAX_BLOCK; i++) {
-            if(block_busy_list[i] == 0)
-                all_busy_flag = 0;
-        }
-        return all_busy_flag;
-    }
-    /**
-     * @deprecated
-     * @brief 返回已完成的block的ID
-     * @return int 
-     */
-    int finished_block(){
-        if(!finished_block_queue.empty())
-            finished_block_queue.pop();
-        return -1;
-    }
-    
 
-private:
 #ifdef DEBUG_GPGPU
     VVentus *device_; ///< GPGPU
 #endif
