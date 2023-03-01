@@ -50,9 +50,9 @@ struct vAddr_info{
 class vt_device {
 public:
     vt_device()
-        :ram_(RAM_RANGE),
-         processor_(){
+        :ram_(RAM_RANGE){
             processor_.attach_ram(&ram_);
+            test_proc();
             // list<unordered_map<int, bool>> task_by_block_l;
             // vector<uint64_t> roots;
         }
@@ -68,6 +68,8 @@ public:
      * @return int 
      */
     int alloc_local_mem(inst_len size, inst_len *dev_maddr, int taskID);
+    int alloc_local_mem(int taskID);
+
     /**
      * @brief 释放分配的空间，释放根页表所指向的空间
      * @param  taskID    要释放的内存空间对应的任务ID  
@@ -99,7 +101,7 @@ public:
                     void *src_addr, 
                     uint64_t size
                 );
-    int start(int kernel_id, int num_block = 1);
+    int start(int kernel_id, host_port_t* input_port, int num_block = 1);
     int wait(uint64_t time);
     queue<int> get_finished_kernel();
     queue<int> excute_all_kernel();

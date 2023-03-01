@@ -5,8 +5,10 @@
 #include <ventus.h>
 #include <chrono>
 
+#include "processor.h"
 #include "MemConfig.h"
 
+using namespace ventus;
 
 #define RT_CHECK(_expr)                                         \
    do {                                                         \
@@ -27,6 +29,8 @@ int default_taskID = 0;
 
 vt_device_h device = nullptr;
 vt_buffer_h staging_buf = nullptr;
+
+host_port_t* input_sig = new host_port_t;
 
 struct kernel_arg_t {
   uint32_t count;
@@ -182,7 +186,7 @@ int run_kernel_test(const kernel_arg_t& kernel_arg,
   // start device
   std::cout << "start execution" << std::endl;
   auto t2 = std::chrono::high_resolution_clock::now();
-  RT_CHECK(vt_start(device, taskID, 1));
+  RT_CHECK(vt_start(device, taskID, 1, input_sig));
   RT_CHECK(vt_ready_wait(device, MAX_TIMEOUT));
   auto t3 = std::chrono::high_resolution_clock::now();
 
@@ -229,7 +233,7 @@ int run_kernel_test(const kernel_arg_t& kernel_arg,
 /// 生成一个随机的kernel.bin文件，用于kernel test
 /// \param taskID
 /// \return
-int create_test_kernel_bin(int taskID, size_t value) {
+void create_test_kernel_bin(int taskID, size_t value) {
     std::ofstream fout(kernel_file);
     int count_block = 64;
     int block_size = 64;
@@ -239,15 +243,26 @@ int create_test_kernel_bin(int taskID, size_t value) {
         }
     }
     fout.close();
-
 }
 
 int main(int argc, char *argv[]) {
 
   size_t value = 2;
-  kernel_arg.src_addr = 0x20000000;
+  kernel_arg.src_addr = GLOBALMEM_BASE;
   kernel_arg.dst_addr = RWDATA_BASE;
-  
+
+    input_sig->host_req_wg_id = HOST_REQ_WG_ID;
+    input_sig->host_req_num_wf = HOST_REQ_NUM_WF;
+    input_sig->host_req_wf_size = HOST_REQ_WF_SIZE;
+    input_sig->host_req_start_pc = HOST_REQ_START_PC;
+    input_sig->host_req_vgpr_size_total = HOST_REQ_VGPR_SIZE_TOTAL;
+    input_sig->host_req_sgpr_size_total = HOST_REQ_SGPR_SIZE_TOTAL;
+    input_sig->host_req_lds_size_total = HOST_REQ_LDS_SIZE_TOTAL;
+    input_sig->host_req_gds_size_total = HOST_REQ_GDS_SIZE_TOTAL;
+    input_sig->host_req_vgpr_size_per_wf = HOST_REQ_VGPR_SIZE_PER_WF;
+    input_sig->host_req_sgpr_size_per_wf = HOST_REQ_SGPR_SIZE_PER_WF;
+    input_sig->host_req_gds_baseaddr = HOST_REQ_GDS_BASEADDR;
+
   // parse command arguments
   parse_args(argc, argv);
 
@@ -270,11 +285,9 @@ int main(int argc, char *argv[]) {
   std::cout << "buffer size: " << buf_size << " bytes" << std::endl;
 
   // allocate device memory
-  /// @note deive的内存空间，函数内部调用了成员的函数mem_allocator_::allocate()
-  /// 
-  RT_CHECK(vt_mem_alloc(device, buf_size, &kernel_arg.src_addr, default_taskID));
+//  RT_CHECK(vt_mem_alloc(device, buf_size, &kernel_arg.src_addr, default_taskID));
   // kernel_arg.src_addr = value;
-  RT_CHECK(vt_mem_alloc(device, buf_size, &kernel_arg.dst_addr, default_taskID));
+  RT_CHECK(vt_mem_alloc(device,&kernel_arg.dst_addr, default_taskID));
   // kernel_arg.dst_addr = value;
 
   kernel_arg.count = num_points;
@@ -301,7 +314,10 @@ int main(int argc, char *argv[]) {
     /// @note 写到了vt_device的成员ram_里
     std::cout << "upload program" << std::endl;  
     RT_CHECK(vt_upload_kernel_file(device, kernel_file, default_taskID));
-
+    {
+        RT_CHECK(vt_copy_to_dev(staging_buf, kernel_arg.src_addr, buf_size, default_taskID));
+        RT_CHECK(vt_copy_to_dev(staging_buf, kernel_arg.src_addr, 24, default_taskID));
+    }
     // upload kernel argument
     /// @note 指定一块上下文的内存空间，地址指针为结构体staging_buf，其中包括了结果要保存的内存地址，
     /// GPU的运行结果会保存在这个指针指向的地址，然后copy回主机的内存中
@@ -309,7 +325,7 @@ int main(int argc, char *argv[]) {
     {
       auto buf_ptr = (void*)vt_host_ptr(staging_buf);
       memcpy(buf_ptr, &kernel_arg, sizeof(kernel_arg_t));
-      RT_CHECK(vt_copy_to_dev(staging_buf, kernel_arg.dst_addr, sizeof(kernel_arg_t), default_taskID));
+      RT_CHECK(vt_copy_to_dev(staging_buf, BUF_PARA_BASE, sizeof(kernel_arg_t), default_taskID));
     }
 
     std::cout << "run kernel test" << std::endl;
@@ -321,6 +337,7 @@ int main(int argc, char *argv[]) {
   cleanup();
 
   std::cout << "Test PASSED" << std::endl;  
-  
+
+  delete input_sig;
   return 0;
 }

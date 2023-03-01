@@ -98,7 +98,9 @@ public:
         }
         uint8_t *out = (uint8_t *)data;
         for(uint64_t i = 0ull; i < length && base + i < size; i++){
+            std::cout << "checkpoint 5.59" << std::endl;
             out[i] = pages->data[base + i];
+            std::cout << "checkpoint 5.6" << std::endl;
         }
         return 0;
     }
@@ -166,7 +168,7 @@ public:
     int writeData(uint64_t addr, uint64_t length, const void *data){
         for(auto &iter: *blocks){
             if(addr >= iter.addr &&
-            addr + length <= iter.addr + iter.size){ // valid address
+               addr + length <= iter.addr + iter.size){ // valid address
                 if(iter.pages== nullptr){
                     printf("No pages in this block: 0x%016lx\n", addr);
                     return -1;
@@ -201,7 +203,7 @@ public:
     int readData(uint64_t addr, uint64_t length, void *data){
         for(auto &iter: *blocks){
             if(addr >= iter.addr &&
-            addr + length <= iter.addr + iter.size){
+               addr + length <= iter.addr + iter.size){
                 if(iter.pages== nullptr){
                     printf("No pages in this block: 0x%016lx\n", addr);
                     return -1;

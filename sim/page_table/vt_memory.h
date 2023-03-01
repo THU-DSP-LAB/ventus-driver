@@ -5,8 +5,8 @@ class Memory{
 public:
     // PhysicalMemory 提供用物理地址读写数据的方法 writeData() readData()
     PhysicalMemory *pmm;
-    Memory(uint64_t MAX_RANGE){
-        pmm = new PhysicalMemory(MAX_RANGE);
+    Memory(uint64_t max_range){
+        pmm = new PhysicalMemory(max_range);
     }
     ~Memory(){
         delete pmm;
@@ -80,20 +80,20 @@ public:
     // 用虚拟地址读数据
     int readDataVirtual(uint64_t root, uint64_t v_addr, uint64_t size, void *out){
         uint64_t vpn = 0ull; uint64_t len = 0ull;
-        uint64_t p_addr = 0ull;
+        uint64_t p_addr = addrConvert(root, v_addr);
         for(uint64_t it = 0ull; it < size; it++){
             if(vpn != ((v_addr + it) & 0x0000007ffffff000ull)){
                 if(len){
-                    pmm->readData(p_addr + it - len, len, (uint8_t *)out + it - len);
+                    pmm->readData(p_addr, len, (uint8_t *)out + it - len);
+                    p_addr = addrConvert(root, v_addr + it);
                 }
                 len = 0ull;
                 vpn = (v_addr + it) & 0x0000007ffffff000ull;
-                p_addr = addrConvert(root, v_addr + it);
             }
             if(!p_addr) return -1;
             len++;
         }
-        pmm->readData(p_addr + size - len, len, (uint8_t *)out + size - len);
+        pmm->readData(p_addr, len, (uint8_t *)out + size - len);
         return 0;
     }
     // 用物理地址读数据
@@ -112,20 +112,20 @@ public:
     // 用虚拟地址写数据
     int writeDataVirtual(uint64_t root, uint64_t v_addr, uint64_t size, void *in){
         uint64_t vpn = 0ull; uint64_t len = 0ull;
-        uint64_t p_addr = 0ull;
+        uint64_t p_addr = addrConvert(root, v_addr);
         for(uint64_t it = 0ull; it < size; it++){
             if(vpn != ((v_addr + it) & 0x0000007ffffff000ull)){
                 if(len){
-                    pmm->writeData(p_addr + it - len, len, (uint8_t *)in + it - len);
+                    pmm->writeData(p_addr, len, (uint8_t *)in + it - len);
+                    p_addr = addrConvert(root, v_addr + it);
                 }
                 len = 0ull;
                 vpn = (v_addr + it) & 0x0000007ffffff000ull;
-                p_addr = addrConvert(root, v_addr + it);
             }
             if(!p_addr) return -1;
             len++;
         }
-        pmm->writeData(p_addr + size - len, len, (uint8_t *)in + size - len);
+        pmm->writeData(p_addr, len, (uint8_t *)in + size - len);
         return 0;
     }
 
@@ -161,6 +161,7 @@ public:
             pt_idx[2] = SV39::VAextract(v_addr + iter, 2);
             pmm->writeWord<uint64_t>(pt2_addr + pt_idx[2]*sizeof(uint64_t), 0ull);
         }
+        return 0;
     }
     // 清理无用页表
     uint64_t cleanPageTable(uint64_t root){

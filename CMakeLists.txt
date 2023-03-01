@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD 11)
 include_directories(common)
 include_directories(include)
 include_directories(sim)
-include_directories(sim/common)
+include_directories(sim/page_table)
 include_directories(tests)
 include_directories(veridriver)
 

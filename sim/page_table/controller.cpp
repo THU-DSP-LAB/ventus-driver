@@ -1,5 +1,6 @@
 #include <cstdint>
 #include "vt_memory.h"
+#include "vt_config.h"
 
 class TLBundleA{ // req
 public:
@@ -11,8 +12,14 @@ public:
     uint64_t *data;
     uint8_t ready; // controller -> gpu, output
     uint8_t valid; // gpu -> controller, input
-//    TLBundleA(uint32_t num_thread){  }
-//    ~TLBundleA(){  }
+//    TLBundleA(){
+//        PCOUT_INFO << "TLBundleA construct variable data : Before" << std::endl;
+//        data = new uint64_t;
+//        PCOUT_INFO << "TLBundleA construct variable data : After" << std::endl;
+//    }
+//    ~TLBundleA(){
+//        delete data;
+//    }
 };
 
 class TLBundleD{ // rsp
@@ -23,8 +30,14 @@ public:
     uint64_t *data;
     uint8_t ready; // gpu -> controller, input
     uint8_t valid; // controller -> gpu, output
-//    TLBundleD(uint32_t num_thread){  }
-//    ~TLBundleD(){  }
+//    TLBundleD(){
+//        PCOUT_INFO << "TLBundleD construct variable data : Before" << std::endl;
+//        data = new uint64_t ;
+//        PCOUT_INFO << "TLBundleD construct variable data : After" << std::endl;
+//    }
+//    ~TLBundleD(){
+//        delete data;
+//    }
 };
 
 class Controller{
@@ -47,16 +60,21 @@ public:
         delete [] data;
     }
     void controller_reset(){
+        PCOUT_INFO << "mem_ctrl_reset : before starting reset" << std::endl;
         rsp_valid_ = 0; req_ready_ = 0;
         // request
+        PCOUT_INFO << "mem_ctrl_reset : before reset request" << std::endl;
         req->ready = req_ready_;
         // response
+        PCOUT_INFO << "mem_ctrl_reset : before reset response" << std::endl;
         rsp->valid = rsp_valid_;
         rsp->size = 0;
         rsp->opcode = 0;
         rsp->source = 0;
+        PCOUT_INFO << "mem_ctrl_reset : before reset data::uint64_t[num_thread]" << std::endl;
         for(auto i = 0; i < num_; i++)
             data[i] = 0;
+        PCOUT_INFO << "mem_ctrl_reset : after reset data::uint64_t[num_thread]" << std::endl;
 
         time_remain_ = 0;
         rw_ = 0;
