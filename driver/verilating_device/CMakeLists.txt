@@ -8,16 +8,18 @@ set(CMAKE_CXX_STANDARD 11)
 
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/common)
-include_directories(${CMAKE_SOURCE_DIR}/devices)
+include_directories(${CMAKE_SOURCE_DIR}/devices/verilating_device)
 include_directories(${CMAKE_SOURCE_DIR}/devices/verilating_device/page_table)
 
 #set(CMAKE_CXX_FLAGS -fPIC)
 
+#set(CMAKE_POSITION_INDEPENDENT_CODE True)
+
 file(GLOB_RECURSE SRCS ./*)
 
-link_directories(${CMAKE_BINARY_DIR}/sim/)
+link_directories(${CMAKE_BINARY_DIR}/devices/verilating_device)
 
-add_library(${STATIC_LIB} STATIC ${SRCS})
+add_library(${STATIC_LIB} SHARED ${SRCS})
 add_dependencies(${STATIC_LIB} rtlsim)
 
 target_link_libraries(${STATIC_LIB} PUBLIC rtlsim)

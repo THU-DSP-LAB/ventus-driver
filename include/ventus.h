@@ -22,7 +22,7 @@
 #include <stdio.h>
 #include <queue>
 
-#include "processor.h"
+#include "vt_utils.h"
 //#ifdef __cplusplus
 //extern "C" {
 //#endif
@@ -107,7 +107,7 @@ int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size, int
 /// @param num_blocks 该任务需要分配的block数量
 /// @param input_port GPGPU硬件输入信号
 /// @return 若无错误则返回0，否则返回-1
-int vt_start(vt_device_h hdevice, int taskID, int num_blocks, ventus::host_port_t* input_port);
+int vt_start(vt_device_h hdevice, int taskID, int num_blocks, host_port_t* input_port);
 
 /// @brief 【已实现】等待设备执行完成
 /// @param hdevice 指向设备的指针

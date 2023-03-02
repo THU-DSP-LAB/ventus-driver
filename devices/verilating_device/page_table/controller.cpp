@@ -1,6 +1,6 @@
 #include <cstdint>
 #include "vt_memory.h"
-#include "verilating_device/vt_config.h"
+#include "vt_utils.h"
 
 class TLBundleA{ // req
 public:
