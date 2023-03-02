@@ -18,7 +18,7 @@
 #include "processor.h"
 #include "controller.cpp"
 #include "vt_utils.h"
-#include "vt_config.h"
+#include "verilating_device/vt_config.h"
 #include <future>
 #include <list>
 #include <queue>

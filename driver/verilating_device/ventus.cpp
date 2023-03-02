@@ -30,18 +30,18 @@
 #include <list>
 #include <chrono>
 // driver/page_table
-#include <ventus.h>
+#include "ventus.h"
 
-#include <vt_device.h>
+#include "vt_device.h"
 
 ///@todo MMU，内存分配
 // #include <vt_malloc.h> 
-#include <vt_utils.h>
+#include "vt_utils.h"
 
 //#include <VT_config.h>
-// sim/page_table
-#include <vt_memory.h>
-#include <MemConfig.h>
+// devices/page_table
+#include "verilating_device/page_table/vt_memory.h"
+#include "verilating_device/page_table/MemConfig.h"
 // #include <util.h>
 #include "processor.h"
 

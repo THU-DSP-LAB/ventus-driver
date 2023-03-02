@@ -13,6 +13,10 @@
  * <tr><td>2022-11-16 <td>1.0     <td>yangzexia     <td>创建
  * </table>
  */
+
+#ifndef PROCESSOR_H_
+#define PROCESSOR_H_
+
 #include <cstdint>
 #include <queue>
 #include "vt_memory.h"
@@ -65,3 +69,5 @@ private:
 ////
  void test_proc();
 }
+
+#endif

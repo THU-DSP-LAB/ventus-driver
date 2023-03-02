@@ -74,8 +74,8 @@ void cleanup() {
     vt_buf_free(staging_buf);
   }
   if (device) {
-    vt_mem_free(device, kernel_arg.src_addr, default_taskID);
-    vt_mem_free(device, kernel_arg.dst_addr, default_taskID);
+    vt_mem_free(device,  default_taskID);
+    vt_mem_free(device,  default_taskID);
     vt_dev_close(device);
   }
 }
@@ -149,7 +149,7 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
   elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start).count();  
   printf("Total elapsed time: %lg ms\n", elapsed);
 
-  vt_mem_free(device, 0, taskID);
+  vt_mem_free(device, taskID);
   return 0;
 }
 
@@ -287,7 +287,7 @@ int main(int argc, char *argv[]) {
   // allocate device memory
 //  RT_CHECK(vt_mem_alloc(device, buf_size, &kernel_arg.src_addr, default_taskID));
   // kernel_arg.src_addr = value;
-  RT_CHECK(vt_mem_alloc(device,&kernel_arg.dst_addr, default_taskID));
+  RT_CHECK(vt_mem_alloc(device, default_taskID));
   // kernel_arg.dst_addr = value;
 
   kernel_arg.count = num_points;

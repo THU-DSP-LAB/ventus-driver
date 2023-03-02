@@ -17,7 +17,7 @@ set(TARGET4 test_processor)
 add_executable(${TARGET1} ../codetests/hello.cpp)
 
 add_dependencies(${TARGET1} rtldriver)
-target_link_directories(${TARGET1} PUBLIC ${CMAKE_BINARY_DIR}/veridriver)
+target_link_directories(${TARGET1} PUBLIC ${CMAKE_BINARY_DIR}/driver)
 target_link_libraries(${TARGET1} librtldriver.so)
 ]]
 

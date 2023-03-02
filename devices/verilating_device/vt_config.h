@@ -25,9 +25,3 @@
 #define   HOST_REQ_GDS_BASEADDR             0x32
 
 #define DEBUG_MMU
-#define DEBUG
-
-#ifdef DEBUG
-    #define PCOUT_INFO std::cout<<"[INFO]: "<<__FUNCTION__<<": "
-#endif
-

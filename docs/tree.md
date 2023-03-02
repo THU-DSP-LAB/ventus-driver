@@ -1,0 +1,9 @@
+- ventus-driver：主目录
+  - include：顶层头文件及配置文件，用于外部调用整个driver
+  - common：不同设备的代码中可能会用到的公共函数
+  - devices：与不同设备底层对接的代码
+    - verilating_device：rtl转C++的设备
+  - driver：不同设备顶层头文件的具体实现
+    - verilating_device：rtl转C++的设备驱动
+  - rtl：rtl代码
+  - tests：测试代码
