@@ -84,19 +84,6 @@ int vt_device::start(int kernel_id,  host_port_t* input_port, int num_block){
             return -1;
         }
     }
-    // if(kernel_id > kernel_list.size()) {
-    //     #ifdef DEBUG_DEV
-    //         cout <<"Please assign kernel_id progressive increase." << endl;
-    //     #endif
-    //     return -1;
-    // }
-    // // 如果当前kernel_id对应的vector元素不存在，则创建一个新的元素
-    // else if(kernel_id == kernel_list.size()) {
-    //     kernel_list.push_back(kernel_info(kernel_id, unordered_map<int, bool>()));
-    // }
-    // // 如果存在，则重置
-    // else 
-    //     kernel_list[kernel_id].clear();
 
     for(int i = 0; i < num_block; i++) {
         int tmp = processor_.run(input_port, kernel_id);

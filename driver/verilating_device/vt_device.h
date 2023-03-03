@@ -113,8 +113,8 @@ private:
     Processor processor_;
     Memory ram_;
     future<int> last_task_;
-    queue<int> finished_kernel_l;
-    list<kernel_info> kernel_list; ///< list每个元素对应一个任务，每个任务由多个block组成
+    queue<int> finished_kernel_l; ///< 已经执行完成的任务ID
+    list<kernel_info> kernel_list; ///< 发送到设备执行的任务，list每个元素对应一个任务，每个任务由多个block组成
     vector<uint64_t> roots; ///< 根页表，为了支持每个kernel都有单独的根页表而声明
 
     vector<vAddr_info> allocAddr_l; ///< 保存已经分配过物理地址的虚拟地址空间

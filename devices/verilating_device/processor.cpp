@@ -276,7 +276,12 @@ Processor::~Processor(){
 void Processor::attach_ram(Memory* mem) {
     impl_->attach_ram(mem);
 }
-
+/**
+ * 发送kernel_id的一个block
+ * @param input_sig
+ * @param kernel_id
+ * @return
+ */
 int Processor::run(host_port_t* input_sig, int kernel_id) {
     return impl_->run(input_sig, kernel_id);
 }
