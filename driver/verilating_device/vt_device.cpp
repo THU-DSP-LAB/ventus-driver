@@ -98,8 +98,6 @@ int vt_device::start(int kernel_id,  host_port_t* input_port, int num_block){
     // else 
     //     kernel_list[kernel_id].clear();
 
-
-
     for(int i = 0; i < num_block; i++) {
         int tmp = processor_.run(input_port, kernel_id);
         return tmp;

@@ -2,8 +2,7 @@
 #include "vt_memory.h"
 #include "vt_utils.h"
 
-class TLBundleA{ // req
-public:
+struct TLBundleA{ // req
     uint8_t opcode;
     uint32_t size;
     uint32_t source;
@@ -22,8 +21,7 @@ public:
 //    }
 };
 
-class TLBundleD{ // rsp
-public:
+struct TLBundleD{ // rsp
     uint8_t opcode;
     uint32_t size;
     uint32_t source;
@@ -60,21 +58,17 @@ public:
         delete [] data;
     }
     void controller_reset(){
-        PCOUT_INFO << "mem_ctrl_reset : before starting reset" << std::endl;
+
         rsp_valid_ = 0; req_ready_ = 0;
         // request
-        PCOUT_INFO << "mem_ctrl_reset : before reset request" << std::endl;
         req->ready = req_ready_;
         // response
-        PCOUT_INFO << "mem_ctrl_reset : before reset response" << std::endl;
         rsp->valid = rsp_valid_;
         rsp->size = 0;
         rsp->opcode = 0;
         rsp->source = 0;
-        PCOUT_INFO << "mem_ctrl_reset : before reset data::uint64_t[num_thread]" << std::endl;
         for(auto i = 0; i < num_; i++)
             data[i] = 0;
-        PCOUT_INFO << "mem_ctrl_reset : after reset data::uint64_t[num_thread]" << std::endl;
 
         time_remain_ = 0;
         rw_ = 0;
