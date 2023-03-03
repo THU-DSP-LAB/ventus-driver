@@ -32,11 +32,11 @@ set(VL_FLAGS
             --cc ${TOP} --top-module ${TOP} -O2 --language 1800-2009 --assert -Wall -Wpedantic
             -Wno-DECLFILENAME -Wno-REDEFMACRO -Wno-MODDUP -Wno-UNUSEDSIGNAL
             --x-initial unique --x-assign unique
+#            --lib-create ${PROJECT2}
             --debug
-            --lib-create ${PROJECT2}
             )
 
-#使用verilator in cmake生成verilator静态库
+#使用verilator in cmake生成verilator动态库
 
 find_package(verilator HINTS $ENV{VERILATOR_ROOT})
 if (NOT verilator_FOUND)
@@ -45,12 +45,10 @@ endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE True)
 
-add_library(${PROJECT} STATIC ${SRCS})
+add_library(${PROJECT} SHARED ${SRCS})
 
-add_library(${PROJECT2} STATIC)
+add_library(${PROJECT2} SHARED)
 target_link_libraries(${PROJECT} PUBLIC ${PROJECT2})
-
-
 
 verilate(${PROJECT2}
         SOURCES ${RTL_SRC}

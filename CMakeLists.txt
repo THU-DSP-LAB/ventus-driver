@@ -13,12 +13,29 @@ include_directories(tests)
 include_directories(driver)
 
 
-add_subdirectory(devices)
-add_subdirectory(driver)
-add_subdirectory(tests)
+set(CMAKE_BUILD_TYPE "Debug")
+
+if(CMAKE_BUILD_TYPE AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wall -O0 -g -ggdb")
+    message("Debug mode:${CMAKE_CXX_FLAGS_DEBUG}")
+#    add_executable(test_debug ${src_dirs})
+
+
+elseif(CMAKE_BUILD_TYPE AND (CMAKE_BUILD_TYPE STREQUAL "Release"))
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wall -O3")
+    message("Release mode:${CMAKE_CXX_FLAGS_RELEASE}")
+#    add_executable(test_release ${src_dirs})
+else()
+    message("else:${CMAKE_BUILD_TYPE}")
+    message("else:${CMAKE_CXX_FLAGS_RELEASE}")
+#    add_executable(test_release ${src_dirs})
+endif()
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/test.cpp")
     set(CODING_TEST test)
     add_executable(${CODING_TEST} test.cpp)
 endif()
 
+add_subdirectory(devices)
+add_subdirectory(driver)
+add_subdirectory(tests)
