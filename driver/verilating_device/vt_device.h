@@ -143,10 +143,17 @@ private:
     uint64_t size_;
 };
 
-class mmu_manager{
+/**
+ * 地址管理，能够以device为单位管理内存地址空间，可能包含多个context的根页表，以及每个kernel使用的
+ * 地址，
+ * 分配地址时判断地址段是否可用，
+ * 管理分配的内存空间的类型（只读段，读写段），
+ * 地址段的释放。
+ */
+class addr_manager{
 public:
-    mmu_manager();
-
+    addr_manager();
+    ~addr_manager();
 private:
 
 };

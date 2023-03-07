@@ -115,15 +115,25 @@ extern int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_vaddr,
     vt_device *device = (vt_device*) hdevice;
     return device->alloc_local_mem(size, dev_vaddr, taskID);
 }
-
-extern int vt_mem_alloc(vt_device_h hdevice, int taskID) {
+/**
+ * 根据taskID（对应context）分配根页表，同一个context下的kernel共用内存空间
+ * @param hdevice 指向device的指针
+ * @param taskID taskID
+ * @return 0 if 无error else -1
+ */
+extern int vt_root_alloc(vt_device_h hdevice, int taskID) {
     if( hdevice == nullptr )
         return -1;
     vt_device *device = (vt_device*) hdevice;
     return device->alloc_local_mem(taskID);
 }
-
-extern int vt_mem_free(vt_device_h hdevice, int taskID) {
+/**
+ * 释放taskID（对应context）的根页表
+ * @param hdevice
+ * @param taskID
+ * @return
+ */
+extern int vt_root_free(vt_device_h hdevice, int taskID) {
     if(hdevice == nullptr) 
         return -1;
     vt_device *device = (vt_device*) hdevice;

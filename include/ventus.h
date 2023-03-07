@@ -38,7 +38,7 @@ typedef void* vt_buffer_h; ///< 类型定义，指向vt_buffer类的指针
 /// @brief 【已实现】打开并连接一个GPGPU设备
 /// @param hdevice 指向设备的指针
 /// @return 若无错误则返回0，否则返回-1
-int vt_dev_open(vt_device_h* hdevice);
+int vt_dev_open(vt_device_h hdevice);
 
 /// @brief 【已实现】当所有操作完成时，关闭设备
 /// @param hdevice 指向设备的指针
@@ -52,62 +52,64 @@ int vt_dev_close(vt_device_h hdevice);
 /// @brief 【已实现】为设备分配buffer
 /// @param hdevice 指向设备的指针
 /// @param size buffer大小
-/// @param hbuffer 指向vt_buffer的指针
+/// @param vaddr 保存设备端内存地址的指针，函数在分配好内存空间后，修改该指针的值为分配的内存的地址
+/// @param taskID context ID
+/// @param kernelID kernel ID
 /// @return 若无错误则返回0，否则返回-1
-int vt_buf_alloc(vt_device_h hdevice, uint64_t size, vt_buffer_h* hbuffer);
+int vt_buf_alloc(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID);
 
 /// @brief 【已实现】释放buffer
-/// @param hbuffer 指向vt_buffer的指针
+/// @param hbuffer 指向设备的指针
+/// @param size buffer大小
+/// @param vaddr 要释放的设备端内存的起始地址
+/// @param taskID context ID
+/// @param kernelID kernel IDD
 /// @return 若无错误则返回0，否则返回-1
-int vt_buf_free(vt_buffer_h hbuffer);
+int vt_buf_free(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID);
 
-/// @brief 【已实现】获取指向buffer的指针，用于host端访问buffer
-/// @param hbuffer 指向类vt_buffer的指针
-/// @return 若无错误则返回0，否则返回-1
-void* vt_host_ptr(vt_buffer_h hbuffer);
-
-
-//int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_vaddr, int taskID);
 
 /// @brief 【已实现】以任务为单位，在GPGPU设备上分配虚拟内存空间（创建根页表）
 /// @param hdevice 指向设备的指针
-/// @param taskID 任务ID，需要从0开始迭加分配
+/// @param taskID context ID，需要从0开始迭加分配
 /// @return 若无错误则返回0，否则返回-1
-int vt_mem_alloc(vt_device_h hdevice, int taskID);
+int vt_root_mem_alloc(vt_device_h hdevice, int taskID);
 
 
 /// @brief 【已实现】释放任务对应的虚拟内存空间和已分配的物理空间（删除根页表）
 /// @param hdevice 指向设备的指针
-/// @param taskID 任务ID
+/// @param taskID context ID
 /// @return 若无错误则返回0，否则返回-1
-int vt_mem_free(vt_device_h hdevice, int taskID);
+int vt_root_mem_free(vt_device_h hdevice, int taskID);
 
 
 /// @brief 【已实现】将数据从buffer复制到设备内存
 /// @param hbuffer 指向类vt_buffer的指针
 /// @param dev_vaddr 设备端保存数据的起始虚拟地址
+/// @param src_addr 源数据的起始地址
 /// @param size 数据大小
 /// @param taskID 任务ID
+/// @param kernelID kernel ID
 /// @return 若无错误则返回0，否则返回-1
-int vt_copy_to_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size, int taskID);
+int vt_copy_to_dev(vt_device_h hdevice, uint64_t dev_vaddr, uint64_t *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
 
 
 /// @brief 【已实现】将数据从设备内存复制到buffer
 /// @param hbuffer 指向类vt_buffer的指针
 /// @param dev_vaddr 设备端保存数据的起始虚拟地址
+/// @param dst_addr 数据要保存的地址
 /// @param size 数据大小
 /// @param taskID 任务ID
 /// @return 若无错误则返回0，否则返回-1
-int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size, int taskID);
+int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, uint64_t *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
 
 
 /// @brief 【已实现】设备开始执行任务
 /// @param hdevice 指向设备的指针
-/// @param taskID 任务ID
+/// @param kernelID kernel ID
 /// @param num_blocks 该任务需要分配的block数量
 /// @param input_port GPGPU硬件输入信号
 /// @return 若无错误则返回0，否则返回-1
-int vt_start(vt_device_h hdevice, int taskID, int num_blocks, host_port_t* input_port);
+int vt_start(vt_device_h hdevice, void* metaData, int kernelID);
 
 /// @brief 【已实现】等待设备执行完成
 /// @param hdevice 指向设备的指针
@@ -135,9 +137,9 @@ int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t siz
 /// @brief 【已实现】上传kernel文件到设备
 /// @param device 指向设备的指针
 /// @param filename kernel文件的名称
-/// @param taskID 对应的任务ID
+/// @param kernelID 对应的kernel ID
 /// @return 若无错误则返回0，否则返回-1
-int vt_upload_kernel_file(vt_device_h device, const char* filename, int taskID);
+int vt_upload_kernel_file(vt_device_h device, const char* filename, int kernelID);
 
 /// dump performance counters
 
