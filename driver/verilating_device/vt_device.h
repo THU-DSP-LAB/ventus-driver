@@ -105,7 +105,7 @@ public:
     int start(int kernel_id, host_port_t* input_port, int num_block = 1);
     int wait(uint64_t time);
     queue<int> get_finished_kernel();
-    queue<int> excute_all_kernel();
+    queue<int> execute_all_kernel();
 
 private:
     int vAddrAllocated(uint64_t vaddr, uint64_t size);
@@ -141,4 +141,12 @@ private:
     vt_device* device_;
     void *data_;
     uint64_t size_;
+};
+
+class mmu_manager{
+public:
+    mmu_manager();
+
+private:
+
 };

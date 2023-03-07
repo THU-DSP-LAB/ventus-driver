@@ -162,7 +162,7 @@ extern int vt_finish_all_kernel(vt_device_h hdevice, queue<int> *finished_list) 
     if(hdevice == nullptr)
         return -1;
     vt_device* device = (vt_device*) hdevice;
-    *finished_list = device->excute_all_kernel();
+    *finished_list = device->execute_all_kernel();
     return 0;
 }
 

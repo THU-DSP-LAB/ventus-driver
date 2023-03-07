@@ -163,7 +163,7 @@ queue<int> vt_device::get_finished_kernel() {
     // }
     return tmp;
 }
-queue<int> vt_device::excute_all_kernel() {
+queue<int> vt_device::execute_all_kernel() {
     queue<int> tmp;
     while(!finished_kernel_l.empty()) {
         while(!finished_kernel_l.empty()) {
