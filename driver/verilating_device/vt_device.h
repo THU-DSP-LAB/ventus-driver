@@ -21,7 +21,7 @@
 #include "verilating_device/vt_config.h"
 #include <future>
 #include <list>
-#include <queue>
+#include <map>
 #include <utility>
 #include <vector>
 #include <unordered_map>
@@ -143,6 +143,28 @@ private:
     uint64_t size_;
 };
 
+struct addrItem{
+    addrItem *prevContextItem;
+    addrItem *succContextItem;
+    addrItem *prevKernelItem;
+    addrItem *succKernelItem;
+    uint64_t kernelID;
+    uint64_t taskID;
+    uint64_t vaddr;
+    uint64_t size;
+    addrItem(uint64_t in_kernelID,uint64_t in_taskID,uint64_t in_vaddr,uint64_t in_size)
+            :prevContextItem(nullptr),
+            succContextItem(nullptr),
+            prevKernelItem(nullptr),
+            succKernelItem(nullptr),
+            kernelID(in_kernelID),
+            taskID(in_taskID),
+            vaddr(in_vaddr),
+            size(in_size)
+        {}
+};
+
+
 /**
  * 地址管理，能够以device为单位管理内存地址空间，可能包含多个context的根页表，以及每个kernel使用的
  * 地址，
@@ -152,8 +174,17 @@ private:
  */
 class addr_manager{
 public:
-    addr_manager();
-    ~addr_manager();
+    addr_manager(){};
+    ~addr_manager(){};
+    int createNewContext(uint64_t contextID);
+    int allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size);
+    int releaseMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size);
 private:
 
+    void findVaddr(addrItem* rootItem, uint64_t *vaddr, uint64_t size);
+    void insertNewItem(addrItem* currentItem, uint64_t contextID, uint64_t kernelID,uint64_t *vaddr, uint64_t size);
+
+    list<uint64_t> contextList;
+    map<uint64_t, addrItem*> contextMemory;
+    list<uint64_t> kernelList;
 };

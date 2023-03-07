@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include "vt_utils.h"
 
 #include "testlib.h"
 
@@ -37,8 +38,8 @@ int main() {
     cout << *(x.end() -1 ) << endl;
     for(auto it : x ) cout << it <<endl;
     cout << search_binary(x, 4);*/
-
-
-    Processor tmp;
+    int a = 65;
+    cout << aligned_size(a, 64)<<endl;
+    return 0;
 
 }

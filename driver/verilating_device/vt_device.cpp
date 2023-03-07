@@ -1,5 +1,6 @@
 #include "vt_device.h"
 #include <cstdlib>
+#include <algorithm>
 #include "vt_utils.h"
 #include "MemConfig.h"
 //#include "processor.h"
@@ -241,4 +242,76 @@ uint64_t vt_buffer::size() const{
 }
 vt_device* vt_buffer::device() const{
     return device_;
+}
+
+
+int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size) {
+    if(size == 0 || vaddr == nullptr) {
+        PCOUT_INFO << "vaddr needs to allocate memory is nullptr! error!" << endl;
+        return -1;
+    }
+
+    size = aligned_size(size, BLOCK_SIZE);
+    addrItem* currentItem = nullptr;
+    auto curContextIt = contextList.begin();
+    while(curContextIt != contextList.end()) {
+        if(*curContextIt == contextID) {
+            if(contextMemory[contextID] == nullptr) {
+                currentItem = new addrItem(kernelID, contextID, *vaddr, size);
+
+                contextMemory[contextID] = currentItem;
+            }
+            else {
+                currentItem = contextMemory[contextID];
+                findVaddr(currentItem, vaddr, size);
+                insertNewItem(currentItem, contextID, kernelID, vaddr, size);
+            }
+            break;
+        }
+        ++curContextIt;
+    }
+    if(curContextIt == contextList.end()){
+        PCOUT_INFO << "Context has not created, can't allocate memory!" << endl;
+        return -1;
+    }
+    return 0;
+}
+
+int addr_manager::createNewContext(uint64_t contextID) {
+    for(auto it : contextList) {
+        if(it == contextID) {
+            PCOUT_INFO << "A context exists, error!" << endl;
+            return -1;
+        }
+    }
+    contextList.emplace_back(contextID);
+    contextMemory.emplace(contextID, nullptr);
+    return 0;
+}
+
+void addr_manager::insertNewItem(addrItem *currentItem, uint64_t contextID, uint64_t kernelID, uint64_t *vaddr,
+                                 uint64_t size) {
+    addrItem* tmp = new addrItem(kernelID, contextID, *vaddr, size);
+    tmp->succContextItem = currentItem->succContextItem;
+    currentItem->succContextItem = tmp;
+    tmp->prevContextItem = currentItem;
+    currentItem->succContextItem->prevContextItem = tmp;
+
+}
+
+void addr_manager::findVaddr(addrItem *rootItem, uint64_t *vaddr, uint64_t size) {
+    auto tmp = rootItem;
+    if(*vaddr < rootItem->vaddr) {
+        if(*vaddr + size <= rootItem->vaddr)
+            return;
+    }
+
+    while(tmp != nullptr) {
+
+        uint64_t curAddrFrame = tmp->vaddr + tmp->size;
+        if((curAddrFrame > size) && (*vaddr + size < tmp->succContextItem->vaddr)) {
+            *vaddr = curAddrFrame;
+        }
+        tmp = tmp->succContextItem;
+    }
 }

@@ -14,3 +14,5 @@ set(CMAKE_CXX_FLAGS "-std=c++11 -Wall -Wextra -Wfatal-errors -Wno-array-bounds -
 add_executable(codetests hello.cpp)
 target_link_directories(codetests PUBLIC ./)
 target_link_libraries(codetests PUBLIC testlib)
+
+target_link_libraries(codetests PUBLIC rtldriver)

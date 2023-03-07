@@ -1,5 +1,5 @@
 #pragma once
-#define BLOCK_SIZE  4096
+#define BLOCK_SIZE  64
 #define MAX_BLOCK   8
 #define RAM_RANGE   (4096ull * 1024*1024) ///< 物理地址空间，4G bytes
 

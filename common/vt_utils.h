@@ -30,7 +30,18 @@ typedef struct {
     inst_len host_req_gds_baseaddr;
 } host_port_t;///< GPGPU和主机之间进行配置参数传递的接口
 
-
+/**
+ * 将size对齐
+ * @param size 要对齐的大小
+ * @param align_block 和该大小对齐
+ * @return 对齐后的大小
+ */
 uint64_t aligned_size(uint64_t size, uint64_t align_block);
+/**
+ * 判断是否对齐
+ * @param addr 要判断的大小
+ * @param align_block 和该大小对齐
+ * @return true if 已对齐 else false
+ */
 bool is_aligned(uint64_t addr, uint64_t align_block);
 
