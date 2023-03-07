@@ -22,6 +22,7 @@
 #include <future>
 #include <list>
 #include <queue>
+#include <utility>
 #include <vector>
 #include <unordered_map>
 
@@ -35,8 +36,8 @@ struct kernel_info{
     unordered_map<int, bool> blk_list;
     int kernel_id;
     kernel_info(int input_kernel_id, unordered_map<int, bool> input_blk_list):
-                kernel_id(input_kernel_id),
-                blk_list(input_blk_list){}
+                blk_list(std::move(input_blk_list)),
+                kernel_id(input_kernel_id){}
 };
 
 struct vAddr_info{
@@ -67,7 +68,7 @@ public:
      * @param  root         指向根页表的指针        
      * @return int 
      */
-    int alloc_local_mem(inst_len size, inst_len *dev_maddr, int taskID);
+    int alloc_local_mem(inst_len size, const inst_len *dev_maddr, int taskID);
     int alloc_local_mem(int taskID);
 
     /**
@@ -123,8 +124,8 @@ private:
 class vt_buffer{
 public:
     vt_buffer(uint64_t size, vt_device* device)
-      : size_(size),
-        device_(device) {
+      : device_(device),
+        size_(size) {
         auto aligned_asize = aligned_size(size, BLOCK_SIZE); //返回一个CACHE_BLOCK_SIZE的大小
         data_ = malloc(aligned_asize);
     }

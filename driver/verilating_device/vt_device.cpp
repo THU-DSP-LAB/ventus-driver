@@ -1,10 +1,10 @@
 #include "vt_device.h"
-#include <stdlib.h>
+#include <cstdlib>
 #include "vt_utils.h"
 #include "MemConfig.h"
 //#include "processor.h"
 
-int vt_device::alloc_local_mem(inst_len size, inst_len *dev_addr, int taskID){
+int vt_device::alloc_local_mem(inst_len size, const inst_len *dev_addr, int taskID){
     if(size <= 0 || dev_addr == nullptr || taskID > roots.size())
         return -1;
     if(roots.size() == taskID) {
@@ -78,16 +78,17 @@ int vt_device::download(int taskID, uint64_t dest_data_addr, void *src_addr, uin
 int vt_device::start(int kernel_id,  host_port_t* input_port, int num_block){
     // host_port_t* input_per_block;
     // *input_per_block = *input_sig;
-    for (auto it : kernel_list) {
+    for (const auto& it : kernel_list) {
         if(it.kernel_id == kernel_id) {
             cout << "this kernel has been excuted and not finished yet" << endl;
             return -1;
         }
     }
-
+    unordered_map<int, bool> blk_list_tmp;
+    // 发送block
     for(int i = 0; i < num_block; i++) {
         int tmp = processor_.run(input_port, kernel_id);
-        return tmp;
+        blk_list_tmp.emplace(tmp, false);
 //        if(last_task_.valid()){
 //            kernel_list.back().blk_list.emplace(last_task_.get(), 0);
 //        }
@@ -95,6 +96,7 @@ int vt_device::start(int kernel_id,  host_port_t* input_port, int num_block){
 //            return processor_.run(input_sig, kernel_id);
 //        });
     }
+    kernel_list.emplace_back(kernel_info(kernel_id, blk_list_tmp));
     return 0;
 }
 /**
@@ -128,12 +130,12 @@ int vt_device::wait(uint64_t time){
 
                 bool task_all_block_finished = true;
                 for(auto& it_map : it->blk_list) {
-                    if(it_map.second == false) {
+                    if(!it_map.second) {
                         task_all_block_finished = false;
                         break;
                     }
                 }
-                if(task_all_block_finished == true) {
+                if(task_all_block_finished) {
                     finished_kernel_l.push(it->kernel_id);
                     it = kernel_list.erase(it);
                 }
@@ -181,17 +183,17 @@ queue<int> vt_device::excute_all_kernel() {
  * @return 1:   vAddr need to allocate
  */
 int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
-    int high = allocAddr_l.size() == 0 ? 0 : allocAddr_l.size() - 1;
+    int high = allocAddr_l.empty() ? 0 : allocAddr_l.size() - 1;
     int low = 0;
     int mid = (high + low ) / 2;
     uint64_t value;
-    if(allocAddr_l.size() == 0) {
-        allocAddr_l.push_back(vAddr_info(vaddr, size));
+    if(allocAddr_l.empty()) {
+        allocAddr_l.emplace_back(vaddr, size);
         return 1;
     }
     if(vaddr > allocAddr_l[high].vAddr ) {
         if(vaddr >= (allocAddr_l[high].vAddr + allocAddr_l[high].size)) {
-            allocAddr_l.push_back(vAddr_info(vaddr, size));
+            allocAddr_l.emplace_back(vaddr, size);
             return 1;
         } else {
             return -1;
