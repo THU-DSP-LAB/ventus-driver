@@ -90,7 +90,7 @@ int vt_root_mem_free(vt_device_h hdevice, int taskID);
 /// @param taskID 任务ID
 /// @param kernelID kernel ID
 /// @return 若无错误则返回0，否则返回-1
-int vt_copy_to_dev(vt_device_h hdevice, uint64_t dev_vaddr, uint64_t *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
+int vt_copy_to_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
 
 
 /// @brief 【已实现】将数据从设备内存复制到buffer
@@ -100,7 +100,7 @@ int vt_copy_to_dev(vt_device_h hdevice, uint64_t dev_vaddr, uint64_t *src_addr, 
 /// @param size 数据大小
 /// @param taskID 任务ID
 /// @return 若无错误则返回0，否则返回-1
-int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, uint64_t *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
+int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
 
 
 /// @brief 【已实现】设备开始执行任务
@@ -109,7 +109,7 @@ int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, uint64_t *dst_addr
 /// @param num_blocks 该任务需要分配的block数量
 /// @param input_port GPGPU硬件输入信号
 /// @return 若无错误则返回0，否则返回-1
-int vt_start(vt_device_h hdevice, void* metaData, int kernelID);
+int vt_start(vt_device_h hdevice, void* metaData, uint64_t taskID, uint64_t kernelID);
 
 /// @brief 【已实现】等待设备执行完成
 /// @param hdevice 指向设备的指针

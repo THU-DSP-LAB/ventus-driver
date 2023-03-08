@@ -45,31 +45,19 @@ int vt_device::free_local_mem(uint64_t size, uint64_t *vaddr, uint64_t taskID, u
     return ret0 || ret1;
 }
 
-int vt_device::upload(int taskID, inst_len dest_addr, uint64_t size, void *data){
-    if(taskID >= roots.size() || roots[taskID] == 0)
+int vt_device::upload(uint64_t dev_vaddr, void *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID){
+    if(size <= 0 || src_addr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
-    uint64_t vaddr = dest_addr;
-    int tmp = vAddrAllocated(vaddr, size);
-    switch (tmp) {
-        case -1:
-            std::cout << "vAddr was not allocated and can't allocate for lack of memory size" << std::endl;
-            return -1;
-        case 0:
-            break;
-        case 1:
-            alloc_local_mem(size, &vaddr, taskID);
-            break;
-        default:
-            break;
-    }
-    return ram_.writeDataVirtual(roots[taskID], vaddr, size, data);
+    auto it = contextList_.find(taskID);
+    return it->second.ram.writeDataVirtual(it->second.root, dev_vaddr, size, src_addr);
     
 }
 
-int vt_device::download(int taskID, uint64_t dest_data_addr, void *src_addr, uint64_t size){
-    if(taskID >= roots.size()|| roots[taskID] == 0)
-        return -1;    
-    return ram_.readDataVirtual(roots[taskID], dest_data_addr+GLOBALMEM_BASE, size, src_addr);
+int vt_device::download(uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID){
+    if(size <= 0 || dst_addr == nullptr || contextList_.find(taskID) == contextList_.end())
+        return -1;
+    auto it = contextList_.find(taskID);
+    return it->second.ram.readDataVirtual(it->second.root, dev_vaddr, size, dst_addr);
 
 }
 /**
