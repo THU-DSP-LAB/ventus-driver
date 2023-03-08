@@ -81,6 +81,8 @@ int vt_root_mem_alloc(vt_device_h hdevice, int taskID);
 /// @return 若无错误则返回0，否则返回-1
 int vt_root_mem_free(vt_device_h hdevice, int taskID);
 
+int vt_create_kernel(vt_device_h hdevice, int taskID, int kernelID);
+
 
 /// @brief 【已实现】将数据从buffer复制到设备内存
 /// @param hbuffer 指向类vt_buffer的指针

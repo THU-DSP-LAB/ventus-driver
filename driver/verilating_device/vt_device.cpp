@@ -26,6 +26,16 @@ int vt_device::delete_device_mem(int taskID){
     return 0;
 }
 
+int vt_device::push_kernel(uint64_t taskID, uint64_t kernelID, map<int, bool> input_blk_list) {
+    if(contextList_.find(taskID) == contextList_.end()) {
+        PCOUT_ERROR << "the taskID of " << taskID <<"has not been created, check your input!" <<endl;
+        return -1;
+    }
+    auto it = contextList_.find(taskID);
+    it->second.kernelList.push_back(kernel_info(kernelID, input_blk_list));
+    return 0;
+}
+
 int vt_device::alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID) {
     if(size <= 0 || vaddr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
@@ -58,7 +68,6 @@ int vt_device::download(uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint6
         return -1;
     auto it = contextList_.find(taskID);
     return it->second.ram.readDataVirtual(it->second.root, dev_vaddr, size, dst_addr);
-
 }
 /**
  * @brief   发送任务，每个任务由多个block组成，每次调用start发送一个任务
@@ -69,29 +78,11 @@ int vt_device::download(uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint6
  * @param input_sig 输入到GPGPU的信号，与硬件接口对应
  * @param num_block 这个任务由多少个block组成
  * @return int 0
+ *
+ * @todo start中调用parse_metaData, 然后push_kernel， 然后为硬件接口赋值，启动GPU
  */
-int vt_device::start(int kernel_id,  host_port_t* input_port, int num_block){
-    // host_port_t* input_per_block;
-    // *input_per_block = *input_sig;
-    for (const auto& it : kernel_list) {
-        if(it.kernel_id == kernel_id) {
-            cout << "this kernel has been excuted and not finished yet" << endl;
-            return -1;
-        }
-    }
-    unordered_map<int, bool> blk_list_tmp;
-    // 发送block
-    for(int i = 0; i < num_block; i++) {
-        int tmp = processor_.run(input_port, kernel_id);
-        blk_list_tmp.emplace(tmp, false);
-//        if(last_task_.valid()){
-//            kernel_list.back().blk_list.emplace(last_task_.get(), 0);
-//        }
-//        last_task_ = std::async (std::launch::async, [&]() -> int {
-//            return processor_.run(input_sig, kernel_id);
-//        });
-    }
-    kernel_list.emplace_back(kernel_info(kernel_id, blk_list_tmp));
+int vt_device::start(int taskID, void* metaData, int kernelID){
+
     return 0;
 }
 /**
@@ -169,69 +160,12 @@ queue<int> vt_device::execute_all_kernel() {
     }
     return tmp;
 }
-/**
- *
- * @param vaddr
- * @param size
- * @return 0:   vAddr has been allocated
- * @return -1:  vAddr was not allocated and can't allocate
- * @return 1:   vAddr need to allocate
- */
-int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
-    int high = allocAddr_l.empty() ? 0 : allocAddr_l.size() - 1;
-    int low = 0;
-    int mid = (high + low ) / 2;
-    uint64_t value;
-    if(allocAddr_l.empty()) {
-        allocAddr_l.emplace_back(vaddr, size);
-        return 1;
-    }
-    if(vaddr > allocAddr_l[high].vAddr ) {
-        if(vaddr >= (allocAddr_l[high].vAddr + allocAddr_l[high].size)) {
-            allocAddr_l.emplace_back(vaddr, size);
-            return 1;
-        } else {
-            return -1;
-        }
-    }
-    if(vaddr < allocAddr_l[low].vAddr) {
-        if((vaddr + size) <= allocAddr_l[low].vAddr) {
-            allocAddr_l.emplace(allocAddr_l.begin(), vAddr_info(vaddr, size));
-            return 1;
-        } else {
-            return  -1;
-        }
-    }
-    while(low <= high) {
-        if(allocAddr_l[mid].vAddr == vaddr && allocAddr_l[mid].size >= size) {
-            return 0;
-        }
-        else if(vaddr < allocAddr_l[mid].vAddr)
-            high = mid-1;
-        else
-            low = mid+1;
-        mid=(low+high) / 2;
-    }
-    value=high;
 
-    if((allocAddr_l[value].vAddr + allocAddr_l[value].size) >= vaddr ||
-            (((vaddr+size) >= allocAddr_l[value+1].vAddr) && (value != allocAddr_l.size() - 1))
-            )
-        return -1;
-    else {
-        auto iter = allocAddr_l.begin();
-        for(int i=0; i < value; i++)
-            iter++;
-        allocAddr_l.emplace(iter, vAddr_info(vaddr, size));
-        return 1;
-    }
+///@todo 实现该函数的定义
+
+int vt_device::parse_metaData(void *metaData) {
+
 }
-
-
-
-//Implementation of class vt_buffer
-
-
 
 
 addr_manager::~addr_manager() {

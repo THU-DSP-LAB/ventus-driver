@@ -37,11 +37,23 @@ enum context_state{
 
 };
 
+struct meta_data{
+    uint64_t kernel_id;
+    uint64_t kernel_size[3];
+    uint64_t wf_size;
+    uint64_t metaDataBaseAddr;
+    uint64_t ldsSize;
+    uint64_t pdsSize;
+    uint64_t sgprUsage;
+    uint64_t vgprUsage;
+    uint64_t pdsBaseAddr;
+};
+
 struct kernel_info{
-    unordered_map<int, bool> blk_list;
+    map<int, bool> blk_list;
     int kernel_id;
     kernel_state state;
-    kernel_info(int input_kernel_id, unordered_map<int, bool> input_blk_list):
+    kernel_info(int input_kernel_id, map<int, bool> input_blk_list):
                 blk_list(std::move(input_blk_list)),
                 kernel_id(input_kernel_id){}
 };
@@ -133,6 +145,8 @@ public:
      * @return int
      */
     int delete_device_mem(int taskID);
+
+
     /**
      * @brief 为GPU分配按照虚拟地址分配内存空间，返回指向根页表的指针
      * @param  size         要分配的空间大小
@@ -161,13 +175,16 @@ public:
      * @return int 
      */
     int download(uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
-    int start(int kernel_id, host_port_t* input_port, int num_block = 1);
+    int start(int taskID, void* metaData, int kernelID);
     int wait(uint64_t time);
     queue<int> get_finished_kernel();
     queue<int> execute_all_kernel();
 
+    int parse_metaData(void *metaData);
+
 private:
-    int vAddrAllocated(uint64_t vaddr, uint64_t size);
+
+    int push_kernel(uint64_t taskID, uint64_t kernelID, map<int, bool>input_blk_list);
 
 
     Processor processor_;
