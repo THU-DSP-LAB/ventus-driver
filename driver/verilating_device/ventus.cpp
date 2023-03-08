@@ -51,11 +51,11 @@ using namespace ventus;
 
 
 /// open the device and connect to it
-extern int vt_dev_open(vt_device_h* hdevice){
+extern int vt_dev_open(vt_device_h hdevice){
     if(hdevice == nullptr)
         return -1;
     PCOUT_INFO << "vt_dev_open : hello world from ventus.cpp" << endl;
-    *hdevice = new vt_device();
+    hdevice = new vt_device();
     return 0;
 }
 /// Close the device when all the operations are done
@@ -74,17 +74,12 @@ extern int vt_dev_caps(vt_device_h* hdevice, host_port_t* input_sig){
 
     return -1;
 }
-extern int vt_buf_alloc(vt_device_h hdevice, uint64_t size, vt_buffer_h* hbuffer) {
-    if(hbuffer == nullptr || size <= 0 || hdevice == nullptr) 
+extern int vt_buf_alloc(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID) {
+    if(size <= 0 || hdevice == nullptr)
         return -1;
     vt_device *device = ((vt_device*) hdevice);
 
-    auto buffer = new vt_buffer(size, device);
-    if(buffer->data() == nullptr) {
-        delete buffer;
-        return -1;
-    }
-    *hbuffer = buffer;
+
     return 0;
 }
 extern int vt_buf_free(vt_buffer_h hbuffer) {
@@ -94,14 +89,7 @@ extern int vt_buf_free(vt_buffer_h hbuffer) {
     delete buffer;
     return 0;
 }
-extern void* vt_host_ptr(vt_buffer_h hbuffer) {
-    if (nullptr == hbuffer)
-        return nullptr;
 
-    vt_buffer* buffer = ((vt_buffer*)hbuffer);
-
-    return buffer->data();
-}
 /**
  * @brief  为设备分配内存，返回根页表的地址
  * @param  hdevice           
@@ -109,69 +97,61 @@ extern void* vt_host_ptr(vt_buffer_h hbuffer) {
  * @param  dev_vaddr    申请物理地址时的虚拟地址         
  * @return int 
  */
-extern int vt_mem_alloc(vt_device_h hdevice, uint64_t size, uint64_t* dev_vaddr, int taskID) {
-    if( hdevice == nullptr || size <= 0 )
+extern int vt_root_mem_alloc(vt_device_h hdevice, int taskID) {
+    if( hdevice == nullptr)
         return -1;
-    vt_device *device = (vt_device*) hdevice;
-    return device->alloc_local_mem(size, dev_vaddr, taskID);
+    auto device = (vt_device*) hdevice;
+    return device->create_device_mem(taskID);
 }
-/**
- * 根据taskID（对应context）分配根页表，同一个context下的kernel共用内存空间
- * @param hdevice 指向device的指针
- * @param taskID taskID
- * @return 0 if 无error else -1
- */
-extern int vt_root_alloc(vt_device_h hdevice, int taskID) {
-    if( hdevice == nullptr )
-        return -1;
-    vt_device *device = (vt_device*) hdevice;
-    return device->alloc_local_mem(taskID);
-}
+
 /**
  * 释放taskID（对应context）的根页表
  * @param hdevice
  * @param taskID
  * @return
  */
-extern int vt_root_free(vt_device_h hdevice, int taskID) {
+extern int vt_root_mem_free(vt_device_h hdevice, int taskID) {
     if(hdevice == nullptr) 
         return -1;
-    vt_device *device = (vt_device*) hdevice;
-    return device->free_local_mem(taskID);
+    auto device = (vt_device*) hdevice;
+    return device->free_device_mem(taskID);
 }
 
-extern int vt_copy_to_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size, int taskID) {
-    if(hbuffer == nullptr || size <= 0)
+extern int vt_copy_to_dev(vt_device_h hdevice, uint64_t dev_vaddr, uint64_t *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID) {
+    if(size <= 0)
         return -1;
-    auto buffer = (vt_buffer*) hbuffer;
-    return buffer->device()->upload(taskID, dev_vaddr, size, buffer->data());
+    auto device = (vt_device*) hdevice;
+    return device->upload(dev_vaddr, src_addr, size, taskID, kernelID);
 }
 
-extern int vt_copy_from_dev(vt_buffer_h hbuffer, uint64_t dev_vaddr, uint64_t size, int taskID) {
-    if(hbuffer == nullptr || size <= 0)
+extern int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, uint64_t *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID) {
+    if(size <= 0)
         return -1;
-    auto buffer = (vt_buffer*) hbuffer;
-    return buffer->device()->download(0, dev_vaddr, buffer->data(), size);
+    auto device = (vt_device*) hdevice;
+    return device->download(dev_vaddr, dst_addr, size, taskID, kernelID);
 }
 
-extern int vt_start(vt_device_h hdevice, int taskID, int num_blocks, host_port_t* input_port) {
+extern int vt_start(vt_device_h hdevice, void* metaData, int kernelID) {
     if(hdevice == nullptr)
         return -1;
     auto device = (vt_device *) hdevice;
-    device->start(taskID, input_port, num_blocks);
+    /*解析metaData，得到input_port和num_blocks*/
+    host_port_t* input_port;
+    int num_blocks;
+    device->start(kernelID, input_port, num_blocks);
     return 0;
 }
 extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     if(hdevice == nullptr)
         return -1;
-    vt_device* device = (vt_device*) hdevice;
+    auto* device = (vt_device*) hdevice;
     return device->wait(timeout);
 }
 
 extern int vt_finish_all_kernel(vt_device_h hdevice, queue<int> *finished_list) {
     if(hdevice == nullptr)
         return -1;
-    vt_device* device = (vt_device*) hdevice;
+    auto device = (vt_device*) hdevice;
     *finished_list = device->execute_all_kernel();
     return 0;
 }

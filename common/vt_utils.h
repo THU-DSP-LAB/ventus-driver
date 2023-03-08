@@ -6,6 +6,7 @@
 #define DEBUG
 
 #ifdef DEBUG
+#define PCOUT_ERROR std::cout<<"[ERROR]: "<<__FUNCTION__<<": "
 #define PCOUT_INFO std::cout<<"[INFO]: "<<__FUNCTION__<<": "
 #endif
 

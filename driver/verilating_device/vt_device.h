@@ -40,12 +40,57 @@ struct kernel_info{
                 kernel_id(input_kernel_id){}
 };
 
-struct vAddr_info{
-    uint64_t vAddr;
+//struct vAddr_info{
+//    uint64_t vAddr;
+//    uint64_t size;
+//    vAddr_info(uint64_t vAddr_in, uint64_t size_in):
+//                vAddr(vAddr_in),
+//                size(size_in){}
+//};
+
+struct addrItem{
+    addrItem *prevContextItem;
+    addrItem *succContextItem;
+    addrItem *prevKernelItem;
+    addrItem *succKernelItem;
+    uint64_t kernelID;
+    uint64_t taskID;
+    uint64_t vaddr;
     uint64_t size;
-    vAddr_info(uint64_t vAddr_in, uint64_t size_in):
-                vAddr(vAddr_in),
-                size(size_in){}
+    addrItem(uint64_t in_kernelID,uint64_t in_taskID,uint64_t in_vaddr,uint64_t in_size)
+            :prevContextItem(nullptr),
+             succContextItem(nullptr),
+             prevKernelItem(nullptr),
+             succKernelItem(nullptr),
+             kernelID(in_kernelID),
+             taskID(in_taskID),
+             vaddr(in_vaddr),
+             size(in_size)
+    {}
+};
+
+/**
+ * 地址管理，能够以device为单位管理内存地址空间，可能包含多个context的根页表，以及每个kernel使用的
+ * 地址，
+ * 分配地址时判断地址段是否可用，
+ * 管理分配的内存空间的类型（只读段，读写段），
+ * 地址段的释放。
+ */
+class addr_manager{
+public:
+    addr_manager(){};
+    ~addr_manager();
+    int createNewContext(uint64_t contextID);
+    int allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size, int BUF_TYPE);
+    int releaseMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size);
+private:
+
+    void findVaddr(addrItem** rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE);
+    void insertNewItem(addrItem* currentItem, uint64_t contextID, uint64_t kernelID,uint64_t *vaddr, uint64_t size);
+
+    list<uint64_t> contextList;
+    map<uint64_t, addrItem*> contextMemory;
+    list<uint64_t> kernelList;
 };
 
 class vt_device {
@@ -69,14 +114,17 @@ public:
      * @return int 
      */
     int alloc_local_mem(inst_len size, const inst_len *dev_maddr, int taskID);
-    int alloc_local_mem(int taskID);
+    int create_device_mem(int taskID);
 
     /**
      * @brief 释放分配的空间，释放根页表所指向的空间
      * @param  taskID    要释放的内存空间对应的任务ID  
      * @return int 
      */
-    int free_local_mem(int taskID);
+    int free_device_mem(int taskID);
+
+
+
     /**
      * @brief 将buffer写入到分配给GPU的memory中，只读区间
      * @param  taskID            任务ID    
@@ -84,11 +132,8 @@ public:
      * @param  size              大小
      * @return int 
      */
-    int upload( int taskID, 
-                inst_len dest_addr, 
-                uint64_t size, 
-                void *data
-            );
+    int upload(
+                uint64_t dev_vaddr, void *data, uint64_t size, uint64_t taskID, uint64_t kernelID);
     /**
      * @brief 
      * @param  root              根页表
@@ -97,11 +142,7 @@ public:
      * @param  size              大小
      * @return int 
      */
-    int download(   int taskID,
-                    uint64_t dest_data_addr,
-                    void *src_addr, 
-                    uint64_t size
-                );
+    int download(   uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
     int start(int kernel_id, host_port_t* input_port, int num_block = 1);
     int wait(uint64_t time);
     queue<int> get_finished_kernel();
@@ -116,75 +157,9 @@ private:
     future<int> last_task_;
     queue<int> finished_kernel_l; ///< 已经执行完成的任务ID
     list<kernel_info> kernel_list; ///< 发送到设备执行的任务，list每个元素对应一个任务，每个任务由多个block组成
-    vector<uint64_t> roots; ///< 根页表，为了支持每个kernel都有单独的根页表而声明
-
-    vector<vAddr_info> allocAddr_l; ///< 保存已经分配过物理地址的虚拟地址空间
-};
-
-class vt_buffer{
-public:
-    vt_buffer(uint64_t size, vt_device* device)
-      : device_(device),
-        size_(size) {
-        auto aligned_asize = aligned_size(size, BLOCK_SIZE); //返回一个CACHE_BLOCK_SIZE的大小
-        data_ = malloc(aligned_asize);
-    }
-    ~vt_buffer(){
-        if(data_){
-            free(data_);
-        }
-    }
-    void* data() const;
-    uint64_t size() const;
-    vt_device* device() const;
-private:
-    vt_device* device_;
-    void *data_;
-    uint64_t size_;
-};
-
-struct addrItem{
-    addrItem *prevContextItem;
-    addrItem *succContextItem;
-    addrItem *prevKernelItem;
-    addrItem *succKernelItem;
-    uint64_t kernelID;
-    uint64_t taskID;
-    uint64_t vaddr;
-    uint64_t size;
-    addrItem(uint64_t in_kernelID,uint64_t in_taskID,uint64_t in_vaddr,uint64_t in_size)
-            :prevContextItem(nullptr),
-            succContextItem(nullptr),
-            prevKernelItem(nullptr),
-            succKernelItem(nullptr),
-            kernelID(in_kernelID),
-            taskID(in_taskID),
-            vaddr(in_vaddr),
-            size(in_size)
-        {}
+    addr_manager addrManager_;
 };
 
 
-/**
- * 地址管理，能够以device为单位管理内存地址空间，可能包含多个context的根页表，以及每个kernel使用的
- * 地址，
- * 分配地址时判断地址段是否可用，
- * 管理分配的内存空间的类型（只读段，读写段），
- * 地址段的释放。
- */
-class addr_manager{
-public:
-    addr_manager(){};
-    ~addr_manager(){};
-    int createNewContext(uint64_t contextID);
-    int allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size);
-    int releaseMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size);
-private:
 
-    void findVaddr(addrItem* rootItem, uint64_t *vaddr, uint64_t size);
-    void insertNewItem(addrItem* currentItem, uint64_t contextID, uint64_t kernelID,uint64_t *vaddr, uint64_t size);
 
-    list<uint64_t> contextList;
-    map<uint64_t, addrItem*> contextMemory;
-    list<uint64_t> kernelList;
-};

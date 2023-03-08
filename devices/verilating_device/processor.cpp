@@ -66,7 +66,7 @@ public:
         }
         ram_ = nullptr;
         this->reset();
-        PCOUT_INFO << "Impl() construct function : finished." << std::endl;
+        PCOUT_ERROR << "Impl() construct function : finished." << std::endl;
     }
     ~Impl(){
         delete device_;
@@ -189,7 +189,7 @@ private:
         device_->reset = 0;
         
         //this->cout_flush();
-        PCOUT_INFO << "Impl::reset() : reset all parts." << std::endl;
+        PCOUT_ERROR << "Impl::reset() : reset all parts." << std::endl;
     }
     /**
      * @brief verilator运行一个周期并评估模型，更新busy和finish两个数组

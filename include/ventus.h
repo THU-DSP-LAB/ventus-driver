@@ -56,7 +56,7 @@ int vt_dev_close(vt_device_h hdevice);
 /// @param taskID context ID
 /// @param kernelID kernel ID
 /// @return 若无错误则返回0，否则返回-1
-int vt_buf_alloc(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID);
+int vt_buf_alloc(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID);
 
 /// @brief 【已实现】释放buffer
 /// @param hbuffer 指向设备的指针

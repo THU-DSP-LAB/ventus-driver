@@ -234,20 +234,25 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
 }
 
 //Implementation of class vt_buffer
-void* vt_buffer::data() const{
-    return data_;
-}
-uint64_t vt_buffer::size() const{
-    return size_;
-}
-vt_device* vt_buffer::device() const{
-    return device_;
+
+
+
+
+addr_manager::~addr_manager() {
+    for(auto it : contextMemory) {
+        addrItem *curItem = it.second;
+        while(curItem != nullptr) {
+            auto tmp = curItem;
+            curItem = curItem->succContextItem;
+            delete tmp;
+        }
+    }
 }
 
 
-int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size) {
+int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size, int BUF_TYPE) {
     if(size == 0 || vaddr == nullptr) {
-        PCOUT_INFO << "vaddr needs to allocate memory is nullptr! error!" << endl;
+        PCOUT_ERROR << "vaddr needs to allocate memory is nullptr! error!" << endl;
         return -1;
     }
 
@@ -263,7 +268,7 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
             }
             else {
                 currentItem = contextMemory[contextID];
-                findVaddr(currentItem, vaddr, size);
+                findVaddr(&currentItem, vaddr, size, BUF_TYPE);
                 insertNewItem(currentItem, contextID, kernelID, vaddr, size);
             }
             break;
@@ -271,16 +276,17 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
         ++curContextIt;
     }
     if(curContextIt == contextList.end()){
-        PCOUT_INFO << "Context has not created, can't allocate memory!" << endl;
+        PCOUT_ERROR << "Context of ID" << contextID <<" has not created, can't allocate memory!" << endl;
         return -1;
     }
     return 0;
 }
 
 int addr_manager::createNewContext(uint64_t contextID) {
+
     for(auto it : contextList) {
         if(it == contextID) {
-            PCOUT_INFO << "A context exists, error!" << endl;
+            PCOUT_ERROR << "A context of ID" << contextID <<" exists, error!" << endl;
             return -1;
         }
     }
@@ -291,27 +297,79 @@ int addr_manager::createNewContext(uint64_t contextID) {
 
 void addr_manager::insertNewItem(addrItem *currentItem, uint64_t contextID, uint64_t kernelID, uint64_t *vaddr,
                                  uint64_t size) {
-    addrItem* tmp = new addrItem(kernelID, contextID, *vaddr, size);
-    tmp->succContextItem = currentItem->succContextItem;
-    currentItem->succContextItem = tmp;
+    auto tmp = new addrItem(kernelID, contextID, *vaddr, size);
+    tmp->succContextItem = (currentItem)->succContextItem;
+    (currentItem)->succContextItem = tmp;
     tmp->prevContextItem = currentItem;
-    currentItem->succContextItem->prevContextItem = tmp;
+    (currentItem)->succContextItem->prevContextItem = tmp;
 
 }
 
-void addr_manager::findVaddr(addrItem *rootItem, uint64_t *vaddr, uint64_t size) {
-    auto tmp = rootItem;
-    if(*vaddr < rootItem->vaddr) {
-        if(*vaddr + size <= rootItem->vaddr)
-            return;
-    }
+void addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE) {
 
-    while(tmp != nullptr) {
+    while(*rootItem != nullptr) {
+        uint64_t curAddrFrame = (*rootItem)->vaddr + (*rootItem)->size;
+        uint64_t newVaddr;
+        if(curAddrFrame < *vaddr) {
+            if((*rootItem)->succContextItem == nullptr){
+                newVaddr = curAddrFrame;
+            }else
+                if((*vaddr + size < (*rootItem)->succContextItem->vaddr))
+                    newVaddr = curAddrFrame;
+            //地址已确定，检查范围是否符合BUF_TYPE
+            switch (BUF_TYPE) {
+                case 0: if((newVaddr > RODATA_BASE) && (newVaddr < RWDATA_BASE)) {
+                        *vaddr = newVaddr;
+                        break;
+                    } else {
+                        PCOUT_ERROR << "vaddr range" << *vaddr <<" not match with BUF_TYPE!" << endl;
+                        break;
+                    }
+                case 1: if((newVaddr > RWDATA_BASE)) {
+                        *vaddr = newVaddr;
+                        break;
+                    } else {
+                        PCOUT_ERROR << "vaddr range" << *vaddr <<" not match with BUF_TYPE!" << endl;
+                        break;
+                    }
+                default: {
+                    PCOUT_ERROR << "unknown BUF_TYPE!" << BUF_TYPE<<" check your input!" <<endl;
+                    break;
+                }
+            }
+            //跳出while循环
+            break;
 
-        uint64_t curAddrFrame = tmp->vaddr + tmp->size;
-        if((curAddrFrame > size) && (*vaddr + size < tmp->succContextItem->vaddr)) {
-            *vaddr = curAddrFrame;
+        }else {
+            (*rootItem) = (*rootItem)->succContextItem;
+            continue;
         }
-        tmp = tmp->succContextItem;
+
     }
+}
+
+int addr_manager::releaseMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size) {
+//    auto tmp = new addrItem(kernelID, contextID, *vaddr, size);
+    bool b_contextExist = false;
+    for(auto it : contextList) {
+        if(it == contextID) {
+            b_contextExist = true;
+            auto tmp = contextMemory[it];
+            while(tmp != nullptr) {
+                if(tmp->vaddr == *vaddr) {
+                    tmp->prevContextItem->succContextItem = tmp->succContextItem;
+                    tmp->succContextItem->prevContextItem = tmp->prevContextItem;
+                    delete tmp;
+                    break;
+                }
+                tmp = tmp->succContextItem;
+            }
+            break;
+        }
+    }
+    if(!b_contextExist) {
+        PCOUT_ERROR << "invalid vaddr of " << *vaddr << " check your input! " << endl;
+        return -1;
+    }
+    return 0;
 }

@@ -30,6 +30,13 @@ int search_binary(vector<int>v, int value)
     return high;
 }
 
+
+void testp(int** p) {
+    for (int i = 0; i < 5; ++i) {
+        (*p)++;
+    }
+}
+
 int main() {
     //binary search
 /*    vector<int>v{ 8,11,19,23,27,33,45,55,67,98 };
@@ -38,8 +45,16 @@ int main() {
     cout << *(x.end() -1 ) << endl;
     for(auto it : x ) cout << it <<endl;
     cout << search_binary(x, 4);*/
-    int a = 65;
+
+ /*   int a = 65;
     cout << aligned_size(a, 64)<<endl;
     return 0;
-
+*/
+    int * p = new int[10];
+    for (int i = 0; i < 10; ++i) {
+        p[i] = i;
+    }
+    cout << *p << endl;
+    testp(&p);
+    cout << *p << endl;
 }
