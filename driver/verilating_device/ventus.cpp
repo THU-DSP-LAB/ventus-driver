@@ -129,7 +129,7 @@ extern int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *dst_a
     return device->download(dev_vaddr, dst_addr, size, taskID, kernelID);
 }
 
-extern int vt_start(vt_device_h hdevice, void* metaData, uint64_t taskID, uint64_t kernelID) {
+extern int vt_start(vt_device_h hdevice, void* metaData, uint64_t taskID) {
     if(hdevice == nullptr)
         return -1;
     auto device = (vt_device *) hdevice;
