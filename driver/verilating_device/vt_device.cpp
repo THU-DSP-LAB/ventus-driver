@@ -5,38 +5,44 @@
 #include "MemConfig.h"
 //#include "processor.h"
 
-int vt_device::alloc_local_mem(inst_len size, const inst_len *dev_addr, int taskID){
-    if(size <= 0 || dev_addr == nullptr || taskID > roots.size())
-        return -1;
-    if(roots.size() == taskID) {
-        uint64_t rootPage = ram_.createRootPageTable();
-        roots.push_back(rootPage);
-    }
-    // 为device申请物理空间
-    int err = ram_.allocateMemory(roots[taskID], *dev_addr, size);
-    if(!err) {
-        cout << "device allocate physical memory failed!" << endl;
+int vt_device::create_device_mem(int taskID) {
+    if(contextList_.find(taskID) != contextList_.end()) {
+        PCOUT_ERROR << "the taskID of " << taskID <<"has been created, check your input!" <<endl;
         return -1;
     }
+    int ret0 = addrManager_.createNewContext(taskID);
+    contextList_.emplace(taskID, context_info(taskID));
+    auto it = contextList_.find(taskID);
+    it->second.root = it->second.ram.createRootPageTable();
+    return ret0;
+}
+
+int vt_device::delete_device_mem(int taskID){
+    if(contextList_.find(taskID) != contextList_.end()) {
+        PCOUT_ERROR << "the taskID of " << taskID <<"has not been created, check your input!" <<endl;
+        return -1;
+    }
+    contextList_.erase(taskID);
     return 0;
 }
 
-int vt_device::alloc_local_mem( int taskID){
-    if(taskID > roots.size())
+int vt_device::alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID) {
+    if(size <= 0 || vaddr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
-    if(roots.size() == taskID) {
-        uint64_t rootPage = ram_.createRootPageTable();
-        roots.push_back(rootPage);
-    }
-    return 0;
+    int ret0 = addrManager_.allocMemory(taskID, kernelID, vaddr, size, BUF_TYPE);
+    auto it = contextList_.find(taskID);
+    it->second.ram.allocateMemory(it->second.root, *vaddr, size);
+    return ret0;
 }
 
-int vt_device::free_local_mem(int taskID){ 
-    if(taskID >= roots.size() || roots[taskID] == 0)
+
+int vt_device::free_local_mem(uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID){
+    if(size <= 0 || vaddr == nullptr || !addrManager_.findContextID(taskID))
         return -1;
-    ram_.cleanTask(roots[taskID]);
-    roots[taskID] = 0;
-    return 0;
+    int ret0 = addrManager_.releaseMemory(taskID, kernelID, vaddr, size);
+    auto it = contextList_.find(taskID);
+    int ret1 = it->second.ram.releaseMemory(it->second.root, *vaddr);
+    return ret0 || ret1;
 }
 
 int vt_device::upload(int taskID, inst_len dest_addr, uint64_t size, void *data){
@@ -233,13 +239,15 @@ int vt_device::vAddrAllocated(uint64_t vaddr, uint64_t size) {
     }
 }
 
+
+
 //Implementation of class vt_buffer
 
 
 
 
 addr_manager::~addr_manager() {
-    for(auto it : contextMemory) {
+    for(auto it : contextMemory_) {
         addrItem *curItem = it.second;
         while(curItem != nullptr) {
             auto tmp = curItem;
@@ -249,6 +257,7 @@ addr_manager::~addr_manager() {
     }
 }
 
+void addr_manager::attatch_ram(Memory *ram) {ram_ = ram;}
 
 int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size, int BUF_TYPE) {
     if(size == 0 || vaddr == nullptr) {
@@ -258,40 +267,44 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
 
     size = aligned_size(size, BLOCK_SIZE);
     addrItem* currentItem = nullptr;
-    auto curContextIt = contextList.begin();
-    while(curContextIt != contextList.end()) {
-        if(*curContextIt == contextID) {
-            if(contextMemory[contextID] == nullptr) {
-                currentItem = new addrItem(kernelID, contextID, *vaddr, size);
-
-                contextMemory[contextID] = currentItem;
-            }
-            else {
-                currentItem = contextMemory[contextID];
-                findVaddr(&currentItem, vaddr, size, BUF_TYPE);
-                insertNewItem(currentItem, contextID, kernelID, vaddr, size);
-            }
-            break;
-        }
-        ++curContextIt;
-    }
-    if(curContextIt == contextList.end()){
+//    auto curContextIt = contextList_.begin();
+//    while(curContextIt != contextList_.end()) {
+//        if(*curContextIt == contextID) {
+    if(contextMemory_.find(contextID) == contextMemory_.end()) {
         PCOUT_ERROR << "Context of ID" << contextID <<" has not created, can't allocate memory!" << endl;
         return -1;
     }
+            if(contextMemory_[contextID] == nullptr) {
+                currentItem = new addrItem(kernelID, contextID, *vaddr, size);
+
+                contextMemory_[contextID] = currentItem;
+            }
+            else {
+                currentItem = contextMemory_[contextID];
+                findVaddr(&currentItem, vaddr, size, BUF_TYPE);
+                insertNewItem(currentItem, contextID, kernelID, vaddr, size);
+            }
+//            break;
+//        }
+//        ++curContextIt;
+//    }
+//    if(curContextIt == contextList_.end()){
+//        PCOUT_ERROR << "Context of ID" << contextID <<" has not created, can't allocate memory!" << endl;
+//        return -1;
+//    }
     return 0;
 }
 
 int addr_manager::createNewContext(uint64_t contextID) {
 
-    for(auto it : contextList) {
-        if(it == contextID) {
+    for(auto it : contextMemory_) {
+        if(it.first == contextID) {
             PCOUT_ERROR << "A context of ID" << contextID <<" exists, error!" << endl;
             return -1;
         }
     }
-    contextList.emplace_back(contextID);
-    contextMemory.emplace(contextID, nullptr);
+//    contextList_.emplace_back(contextID);
+    contextMemory_.emplace(contextID, nullptr);
     return 0;
 }
 
@@ -351,25 +364,47 @@ void addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size
 int addr_manager::releaseMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size) {
 //    auto tmp = new addrItem(kernelID, contextID, *vaddr, size);
     bool b_contextExist = false;
-    for(auto it : contextList) {
-        if(it == contextID) {
+    bool b_vaddrExist = false;
+//    for(auto it : contextList_) {
+//        if(it == contextID) {
             b_contextExist = true;
-            auto tmp = contextMemory[it];
+            auto tmp = contextMemory_[contextID];
             while(tmp != nullptr) {
                 if(tmp->vaddr == *vaddr) {
                     tmp->prevContextItem->succContextItem = tmp->succContextItem;
                     tmp->succContextItem->prevContextItem = tmp->prevContextItem;
                     delete tmp;
+                    b_vaddrExist = true;
                     break;
                 }
                 tmp = tmp->succContextItem;
-            }
-            break;
-        }
+//            }
+//            break;
+//        }
     }
     if(!b_contextExist) {
+        PCOUT_ERROR << "context ID of " << contextID << " check your input! " << endl;
+        return -1;
+    }
+    if(!b_vaddrExist) {
         PCOUT_ERROR << "invalid vaddr of " << *vaddr << " check your input! " << endl;
         return -1;
     }
     return 0;
+}
+
+bool addr_manager::findContextID(uint64_t contextID) {
+    for(auto it : contextMemory_) {
+        if(it.first == contextID)
+            return true;
+    }
+    return false;
+}
+
+bool addr_manager::findKernelID(uint64_t kernelID) {
+    for(auto it : kernelList_) {
+        if(it == kernelID)
+            return true;
+    }
+    return false;
 }

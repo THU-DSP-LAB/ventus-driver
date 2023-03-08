@@ -15,4 +15,4 @@ add_executable(codetests hello.cpp)
 target_link_directories(codetests PUBLIC ./)
 target_link_libraries(codetests PUBLIC testlib)
 
-target_link_libraries(codetests PUBLIC rtldriver)
+#target_link_libraries(codetests PUBLIC rtldriver)

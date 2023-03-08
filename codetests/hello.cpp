@@ -1,6 +1,6 @@
 #include <iostream>
 #include <vector>
-#include "vt_utils.h"
+
 
 #include "testlib.h"
 
@@ -31,10 +31,8 @@ int search_binary(vector<int>v, int value)
 }
 
 
-void testp(int** p) {
-    for (int i = 0; i < 5; ++i) {
-        (*p)++;
-    }
+void testp(int* p) {
+    *p = 5;
 }
 
 int main() {
@@ -50,11 +48,9 @@ int main() {
     cout << aligned_size(a, 64)<<endl;
     return 0;
 */
-    int * p = new int[10];
-    for (int i = 0; i < 10; ++i) {
-        p[i] = i;
-    }
+    int *p = new int;
+    *p =11;
     cout << *p << endl;
-    testp(&p);
+    testp(p);
     cout << *p << endl;
 }

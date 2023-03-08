@@ -60,11 +60,10 @@ extern int vt_dev_open(vt_device_h hdevice){
 }
 /// Close the device when all the operations are done
 extern int vt_dev_close(vt_device_h hdevice){
-    if(hdevice == nullptr);
+    if(hdevice == nullptr)
         return -1;
-    vt_device* device = (vt_device*) hdevice;
+    auto* device = (vt_device*) hdevice;
     delete device;
-
     return 0;
 }
 extern int vt_dev_caps(vt_device_h* hdevice, host_port_t* input_sig){
@@ -77,17 +76,16 @@ extern int vt_dev_caps(vt_device_h* hdevice, host_port_t* input_sig){
 extern int vt_buf_alloc(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID) {
     if(size <= 0 || hdevice == nullptr)
         return -1;
-    vt_device *device = ((vt_device*) hdevice);
+    auto device = ((vt_device*) hdevice);
+    return device->alloc_local_mem( size, vaddr, BUF_TYPE, taskID, kernelID);
 
-
-    return 0;
 }
-extern int vt_buf_free(vt_buffer_h hbuffer) {
-    if(hbuffer == nullptr)
+extern int vt_buf_free(vt_buffer_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID) {
+    if(size <= 0 || hdevice == nullptr)
         return -1;
-    vt_buffer *buffer = ((vt_buffer*)hbuffer);
-    delete buffer;
-    return 0;
+    auto device = ((vt_device*) hdevice);
+    return device->free_local_mem( size, vaddr, taskID, kernelID);
+
 }
 
 /**
@@ -114,7 +112,7 @@ extern int vt_root_mem_free(vt_device_h hdevice, int taskID) {
     if(hdevice == nullptr) 
         return -1;
     auto device = (vt_device*) hdevice;
-    return device->free_device_mem(taskID);
+    return device->delete_device_mem(taskID);
 }
 
 extern int vt_copy_to_dev(vt_device_h hdevice, uint64_t dev_vaddr, uint64_t *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID) {

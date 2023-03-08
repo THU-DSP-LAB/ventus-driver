@@ -30,23 +30,33 @@ using namespace ventus;
 using namespace std;
 //These macro is defined as test
 
+enum kernel_state{
+    IDLE, START, RUN, FINISH
+};
+enum context_state{
 
+};
 
 struct kernel_info{
     unordered_map<int, bool> blk_list;
     int kernel_id;
+    kernel_state state;
     kernel_info(int input_kernel_id, unordered_map<int, bool> input_blk_list):
                 blk_list(std::move(input_blk_list)),
                 kernel_id(input_kernel_id){}
 };
 
-//struct vAddr_info{
-//    uint64_t vAddr;
-//    uint64_t size;
-//    vAddr_info(uint64_t vAddr_in, uint64_t size_in):
-//                vAddr(vAddr_in),
-//                size(size_in){}
-//};
+struct context_info{
+    uint64_t contextID;
+    vector<kernel_info> kernelList;
+    uint64_t root;
+    Memory ram;
+    context_info(uint64_t taskID)
+                :contextID(taskID),ram(RAM_RANGE)
+    {
+        root = 0;
+    }
+};
 
 struct addrItem{
     addrItem *prevContextItem;
@@ -80,17 +90,24 @@ class addr_manager{
 public:
     addr_manager(){};
     ~addr_manager();
+
+    void attatch_ram(Memory* ram);
     int createNewContext(uint64_t contextID);
     int allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size, int BUF_TYPE);
     int releaseMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size);
+
+    bool findContextID(uint64_t contextID);
+    bool findKernelID(uint64_t kernelID);
 private:
 
     void findVaddr(addrItem** rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE);
     void insertNewItem(addrItem* currentItem, uint64_t contextID, uint64_t kernelID,uint64_t *vaddr, uint64_t size);
 
-    list<uint64_t> contextList;
-    map<uint64_t, addrItem*> contextMemory;
-    list<uint64_t> kernelList;
+//    list<uint64_t> contextList_;
+    map<uint64_t, addrItem*> contextMemory_;
+    list<uint64_t> kernelList_;
+
+
 };
 
 class vt_device {
@@ -98,6 +115,7 @@ public:
     vt_device()
         :ram_(RAM_RANGE){
             processor_.attach_ram(&ram_);
+            addrManager_.attatch_ram(&ram_);
             test_proc();
             // list<unordered_map<int, bool>> task_by_block_l;
             // vector<uint64_t> roots;
@@ -106,6 +124,15 @@ public:
         if(last_task_.valid())
             last_task_.wait();
     }
+
+    int create_device_mem(int taskID);
+
+    /**
+     * @brief 释放分配的空间，释放根页表所指向的空间
+     * @param  taskID    要释放的内存空间对应的任务ID
+     * @return int
+     */
+    int delete_device_mem(int taskID);
     /**
      * @brief 为GPU分配按照虚拟地址分配内存空间，返回指向根页表的指针
      * @param  size         要分配的空间大小
@@ -113,15 +140,11 @@ public:
      * @param  root         指向根页表的指针        
      * @return int 
      */
-    int alloc_local_mem(inst_len size, const inst_len *dev_maddr, int taskID);
-    int create_device_mem(int taskID);
+    int alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID);
 
-    /**
-     * @brief 释放分配的空间，释放根页表所指向的空间
-     * @param  taskID    要释放的内存空间对应的任务ID  
-     * @return int 
-     */
-    int free_device_mem(int taskID);
+    int free_local_mem(uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID);
+
+
 
 
 
@@ -157,6 +180,7 @@ private:
     queue<int> finished_kernel_l; ///< 已经执行完成的任务ID
     list<kernel_info> kernel_list; ///< 发送到设备执行的任务，list每个元素对应一个任务，每个任务由多个block组成
     addr_manager addrManager_;
+    map<int, context_info> contextList_;
 };
 
 
