@@ -132,8 +132,7 @@ public:
      * @param  size              大小
      * @return int 
      */
-    int upload(
-                uint64_t dev_vaddr, void *data, uint64_t size, uint64_t taskID, uint64_t kernelID);
+    int upload(uint64_t dev_vaddr, uint64_t *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
     /**
      * @brief 
      * @param  root              根页表
@@ -142,7 +141,7 @@ public:
      * @param  size              大小
      * @return int 
      */
-    int download(   uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
+    int download(uint64_t dev_vaddr, uint64_t *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
     int start(int kernel_id, host_port_t* input_port, int num_block = 1);
     int wait(uint64_t time);
     queue<int> get_finished_kernel();
