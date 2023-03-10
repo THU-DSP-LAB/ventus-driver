@@ -1,5 +1,6 @@
 #include "vt_device.h"
 #include <cstdlib>
+#include <cmath>
 #include <algorithm>
 #include "vt_utils.h"
 #include "MemConfig.h"
@@ -13,8 +14,9 @@ int vt_device::create_device_mem(int taskID) {
     int ret0 = addrManager_.createNewContext(taskID);
     contextList_.emplace(taskID, context_info(taskID));
     auto it = contextList_.find(taskID);
-    it->second.root = it->second.ram.createRootPageTable();
-    return ret0;
+    uint64_t ret1 = it->second.ram.createRootPageTable();
+    it->second.root = ret1;
+    return ret0 || !ret1;
 }
 
 int vt_device::delete_device_mem(int taskID){
@@ -26,23 +28,23 @@ int vt_device::delete_device_mem(int taskID){
     return 0;
 }
 
-int vt_device::push_kernel(uint64_t taskID, uint64_t kernelID, map<int, bool> input_blk_list) {
-    if(contextList_.find(taskID) == contextList_.end()) {
-        PCOUT_ERROR << "the taskID of " << taskID <<"has not been created, check your input!" <<endl;
-        return -1;
-    }
-    auto it = contextList_.find(taskID);
-    it->second.kernelList.push_back(kernel_info(kernelID, input_blk_list));
-    return 0;
-}
+//int vt_device::push_kernel(uint64_t taskID, uint64_t kernelID, map<int, bool> input_blk_list) {
+//    if(contextList_.find(taskID) == contextList_.end()) {
+//        PCOUT_ERROR << "the taskID of " << taskID <<"has not been created, check your input!" <<endl;
+//        return -1;
+//    }
+//    auto it = contextList_.find(taskID);
+//    it->second.kernelList.push_back(kernel_info(kernelID, input_blk_list));
+//    return 0;
+//}
 
 int vt_device::alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID) {
     if(size <= 0 || vaddr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
     int ret0 = addrManager_.allocMemory(taskID, kernelID, vaddr, size, BUF_TYPE);
     auto it = contextList_.find(taskID);
-    it->second.ram.allocateMemory(it->second.root, *vaddr, size);
-    return ret0;
+    int ret1 = it->second.ram.allocateMemory(it->second.root, *vaddr, size);
+    return ret0 || !ret1;
 }
 
 
@@ -81,8 +83,42 @@ int vt_device::download(uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint6
  *
  * @todo start中调用parse_metaData, 然后push_kernel， 然后为硬件接口赋值，启动GPU
  */
-int vt_device::start(int taskID, void* metaData, int kernelID){
+int vt_device::start(int taskID, void* metaData){
+    //parse metaData
+    host_port_t *devicePort = new host_port_t;
+    auto inputData = (meta_data *)metaData;
+    uint64_t wgNum = inputData->kernel_size[0] * inputData->kernel_size[1]*inputData->kernel_size[2];
+    devicePort->host_req_gds_baseaddr = 128;
+    devicePort->host_req_gds_size_total = 0;
+    devicePort->host_req_lds_size_total = inputData->ldsSize * wgNum;
+    devicePort->host_req_num_wf = inputData->wg_size;
+    devicePort->host_req_sgpr_size_per_wf = inputData->sgprUsage;
+    devicePort->host_req_sgpr_size_total = inputData->sgprUsage;
+    devicePort->host_req_vgpr_size_total = inputData->vgprUsage;
+    devicePort->host_req_vgpr_size_per_wf = inputData->vgprUsage;
+    devicePort->host_req_start_pc = 0;
+    devicePort->host_req_wf_size = inputData->wf_size;
+    devicePort->host_req_wg_id = 0;
 
+    if(contextList_.find(taskID) == contextList_.end()) {
+        PCOUT_ERROR << "the context of ID "<< taskID << " not exists, check your input!" << endl;
+        return -1;
+    }
+    //each function call send one block of a kernel
+    for (int i = 0; i < wgNum; ++i) {
+        uint64_t kernelID = inputData->kernel_id;
+        devicePort->host_req_wg_id = (inst_len)(((
+                    kernelID<<(int)ceil(log2(MAX_CONTEXT)) | taskID)
+                    <<((int)ceil(log2(MAX_KERNEL)) | kernelID))
+                    <<((int)ceil(log2(NUM_SM*MAX_BLOCK_PER_SM)) | i))
+                    <<((int)ceil(log2(NUM_SM)));
+        processor_.run(devicePort);
+        //更新contextList_
+        map<int, _state>firedBlk;
+        firedBlk.emplace((int)(devicePort->host_req_wg_id), UNFINISH);
+        contextList_.find(taskID)->second.kernelList.emplace(inputData->kernel_id, kernel_info(firedBlk, UNFINISH));
+
+    }
     return 0;
 }
 /**
@@ -107,25 +143,45 @@ int vt_device::wait(uint64_t time){
 
     std::queue<int> finished_block = processor_.wait(time);
     while(!finished_block.empty()) {
-        bool block_legal = false;
-        for(auto it=kernel_list.begin();it != kernel_list.end(); it++) {
-            if(it->blk_list.find(finished_block.front()) != it->blk_list.end()) {
-                (*it).blk_list[finished_block.front()] = true;
-                finished_block.pop();
-                block_legal = true;
+        bool block_legal = true;
+        //根据硬件返回的已完成blkID，解码出所属的context, kernel和原本的block
+        uint64_t blkID = (finished_block.front() >> (int)ceil(log2(NUM_SM))) & (1 << (int)ceil(log2(NUM_SM*MAX_BLOCK_PER_SM)));
+        uint64_t kernelID = (finished_block.front() >> (int)ceil(log2(NUM_SM*MAX_BLOCK_PER_SM*NUM_SM))) & (1 << (int)ceil(log2(MAX_KERNEL)));
+        uint64_t contextID = (finished_block.front() >> (int)ceil(log2(NUM_SM*MAX_BLOCK_PER_SM*NUM_SM*MAX_KERNEL))) & (1 << (int)ceil(log2(MAX_CONTEXT)));
+        auto contextItem = contextList_.find(contextID);
+        //判断contextID是否存在
+        if(contextItem == contextList_.end())
+            block_legal = false;
+        else{
+            auto it = contextItem->second.kernelList.find(kernelID);
+                //判断kernelID是否存在
+                if(it == contextItem->second.kernelList.end()) {
+                    block_legal = false;
+                }
+                else {
+                    //判断blkID是否存在
+                    if(it->second.blk_list.find(blkID) == it->second.blk_list.end())
+                        block_legal = false;
+                    else {
+                        //将相应kernel的block设置为已完成
+                        it->second.blk_list[blkID] = FINISH;
+                        finished_block.pop();
 
-                bool task_all_block_finished = true;
-                for(auto& it_map : it->blk_list) {
-                    if(!it_map.second) {
-                        task_all_block_finished = false;
-                        break;
+                        //当某一个kernel的block完成之后，判断是否该block的所有kernel都完成，
+                        // 判断该kernel所属的context的所有kernel是否都完成
+                        bool kernel_all_block_finished = true;
+                        for(auto& it_map : it->second.blk_list) {
+                            if(!it_map.second) {
+                                kernel_all_block_finished = false;
+                                break;
+                            }
+                        }
+                        if(kernel_all_block_finished) {
+                            finished_kernel_l.push(contextID << (int)ceil(log2(MAX_CONTEXT)) | kernelID);
+                            it->second.state = FINISH;
+                        }
                     }
                 }
-                if(task_all_block_finished) {
-                    finished_kernel_l.push(it->kernel_id);
-                    it = kernel_list.erase(it);
-                }
-            }
         }
         if(!block_legal) {
             cout << "return Wrong finished block ID, something error" << endl;
@@ -140,18 +196,19 @@ int vt_device::wait(uint64_t time){
  */
 queue<int> vt_device::get_finished_kernel() {
     queue<int> tmp;
-    // while(!finished_kernel_l.empty()) {
-        while(!finished_kernel_l.empty()) {
-            tmp.push(finished_kernel_l.front());
-            finished_kernel_l.pop();
-        }
-    //     wait(RUN_DELAY);
-    // }
+    while(!finished_kernel_l.empty()) {
+        tmp.push(finished_kernel_l.front());
+        finished_kernel_l.pop();
+    }
     return tmp;
 }
+/**
+ * 执行所有context下的所有kernel，并返回已完成kernel ID的队列
+ * @return
+ */
 queue<int> vt_device::execute_all_kernel() {
     queue<int> tmp;
-    while(!finished_kernel_l.empty()) {
+    while(!get_finished_context().empty()) {
         while(!finished_kernel_l.empty()) {
             tmp.push(finished_kernel_l.front());
             finished_kernel_l.pop();
@@ -161,10 +218,42 @@ queue<int> vt_device::execute_all_kernel() {
     return tmp;
 }
 
-///@todo 实现该函数的定义
 
-int vt_device::parse_metaData(void *metaData) {
+queue<int> vt_device::get_finished_context() {
+    queue<int> tmp;
+    auto it = contextList_.begin();
+    while(it != contextList_.end()) {
+        if(it->second.context_finished()){
+            tmp.push(it->second.contextID);
+            it = contextList_.erase(it);
+        }
+        else ++it;
+    }
+    return tmp;
+}
 
+///@deprecated
+
+uint64_t vt_device::parse_metaData(uint64_t taskID, void *metaData, host_port_t* devicePort) {
+    meta_data* inputData = (meta_data *)metaData;
+    uint64_t wgNum = inputData->kernel_size[0] * inputData->kernel_size[1]*inputData->kernel_size[2];
+    devicePort->host_req_gds_baseaddr = 128;
+    devicePort->host_req_gds_size_total = 0;
+    devicePort->host_req_lds_size_total = inputData->ldsSize * wgNum;
+    devicePort->host_req_num_wf = inputData->wg_size;
+    devicePort->host_req_sgpr_size_per_wf = inputData->sgprUsage;
+    devicePort->host_req_sgpr_size_total = inputData->sgprUsage;
+    devicePort->host_req_vgpr_size_total = inputData->vgprUsage;
+    devicePort->host_req_vgpr_size_per_wf = inputData->vgprUsage;
+    devicePort->host_req_start_pc = 0;
+    devicePort->host_req_wf_size = inputData->wf_size;
+    devicePort->host_req_wg_id = 0;
+
+    if(contextList_.find(taskID) == contextList_.end()) {
+        PCOUT_ERROR << "the context of ID "<< taskID << " not exists, check your input!" << endl;
+        return -1;
+    }
+    return wgNum;
 }
 
 
@@ -179,7 +268,6 @@ addr_manager::~addr_manager() {
     }
 }
 
-void addr_manager::attatch_ram(Memory *ram) {ram_ = ram;}
 
 int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size, int BUF_TYPE) {
     if(size == 0 || vaddr == nullptr) {

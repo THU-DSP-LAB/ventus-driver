@@ -5,8 +5,10 @@
 
 #define NUM_THREAD          16
 #define MAX_BLOCK_PER_SM    32
-#define NUM_SM              16
+#define NUM_SM              2
 
+#define MAX_CONTEXT         4
+#define MAX_KERNEL          4
 
 #define RESET_DELAY         5
 #define RUN_DELAY   100 ///< 如果运行新任务时所有block都忙，最长等待时间

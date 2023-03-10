@@ -247,9 +247,9 @@ void create_test_kernel_bin(int taskID, size_t value) {
 
 int main(int argc, char *argv[]) {
 
-  size_t value = 2;
-  kernel_arg.src_addr = GLOBALMEM_BASE;
-  kernel_arg.dst_addr = RWDATA_BASE;
+    size_t value = 2;
+    int taskID = 0;
+    int kernelID = 0;
 
     input_sig->host_req_wg_id = HOST_REQ_WG_ID;
     input_sig->host_req_num_wf = HOST_REQ_NUM_WF;

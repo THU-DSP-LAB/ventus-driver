@@ -53,6 +53,7 @@ int vt_dev_close(vt_device_h hdevice);
 /// @param hdevice 指向设备的指针
 /// @param size buffer大小
 /// @param vaddr 保存设备端内存地址的指针，函数在分配好内存空间后，修改该指针的值为分配的内存的地址
+/// @param BUF_TYPE 要分配的buffer类型 只读or读写（device端）
 /// @param taskID context ID
 /// @param kernelID kernel ID
 /// @return 若无错误则返回0，否则返回-1
@@ -81,11 +82,9 @@ int vt_root_mem_alloc(vt_device_h hdevice, int taskID);
 /// @return 若无错误则返回0，否则返回-1
 int vt_root_mem_free(vt_device_h hdevice, int taskID);
 
-int vt_create_kernel(vt_device_h hdevice, int taskID, int kernelID);
-
 
 /// @brief 【已实现】将数据从buffer复制到设备内存
-/// @param hbuffer 指向类vt_buffer的指针
+/// @param hdevice 指向设备的指针
 /// @param dev_vaddr 设备端保存数据的起始虚拟地址
 /// @param src_addr 源数据的起始地址
 /// @param size 数据大小
@@ -96,9 +95,9 @@ int vt_copy_to_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *src_addr, uint
 
 
 /// @brief 【已实现】将数据从设备内存复制到buffer
-/// @param hbuffer 指向类vt_buffer的指针
+/// @param hdevice 指向设备的指针
 /// @param dev_vaddr 设备端保存数据的起始虚拟地址
-/// @param dst_addr 数据要保存的地址
+/// @param dst_addr 数据的目标地址
 /// @param size 数据大小
 /// @param taskID 任务ID
 /// @return 若无错误则返回0，否则返回-1
@@ -107,9 +106,8 @@ int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *dst_addr, ui
 
 /// @brief 【已实现】设备开始执行任务
 /// @param hdevice 指向设备的指针
-/// @param kernelID kernel ID
-/// @param num_blocks 该任务需要分配的block数量
-/// @param input_port GPGPU硬件输入信号
+/// @param metaData 要执行的kernel的metaData
+/// @param taskID 该kernel属于哪个context
 /// @return 若无错误则返回0，否则返回-1
 int vt_start(vt_device_h hdevice, void* metaData, uint64_t taskID);
 
@@ -119,11 +117,12 @@ int vt_start(vt_device_h hdevice, void* metaData, uint64_t taskID);
 /// @return 若无错误则返回0，否则返回-1
 int vt_ready_wait(vt_device_h hdevice, uint64_t timeout);
 
-/// @brief 【已实现】执行所有的kernel，并返回kernel ID
+/// @brief 【已实现】执行所有的kernel，更新已完成的kernel队列，
+/// 队列的每个元素的低ceil(log2(MAX_KERNEL))是kernelID，高位是contextID
 /// @param hdevice 指向设备的指针
 /// @param finished_list 指向已完成kernel的list
 /// @return 若无错误则返回0，否则返回-1
-int vt_finish_all_kernel(vt_device_h hdevice, std::queue<int> *finished_list);
+int vt_finish_all_kernel(vt_device_h hdevice, std::queue<int> *finished_kernel_list);
 
 ////////////////////////////// UTILITY FUNCIONS ///////////////////////////////
 
@@ -144,7 +143,6 @@ int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t siz
 int vt_upload_kernel_file(vt_device_h device, const char* filename, int kernelID);
 
 /// dump performance counters
-
 /// @brief 【未实现】性能计数
 /// @param device 指向设备的指针
 /// @param stream 

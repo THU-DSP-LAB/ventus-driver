@@ -30,43 +30,49 @@ using namespace ventus;
 using namespace std;
 //These macro is defined as test
 
-enum kernel_state{
-    IDLE, START, RUN, FINISH
+enum _state{
+    UNFINISH, FINISH
 };
-enum context_state{
 
-};
 
 struct meta_data{
     uint64_t kernel_id;
-    uint64_t kernel_size[3];
-    uint64_t wf_size;
-    uint64_t metaDataBaseAddr;
-    uint64_t ldsSize;
-    uint64_t pdsSize;
-    uint64_t sgprUsage;
-    uint64_t vgprUsage;
-    uint64_t pdsBaseAddr;
+    uint64_t kernel_size[3];///> 每个kernel的workgroup三维数目
+    uint64_t wf_size; ///> 每个warp的thread数目
+    uint64_t wg_size; ///> 每个workgroup的warp数目
+    uint64_t metaDataBaseAddr;///> CSR_KNL的值，
+    uint64_t ldsSize;///> 每个workgroup使用的local memory的大小
+    uint64_t pdsSize;///> 每个thread用到的private memory大小
+    uint64_t sgprUsage;///> 每个workgroup使用的标量寄存器数目
+    uint64_t vgprUsage;///> 每个thread使用的向量寄存器数目
+    uint64_t pdsBaseAddr;///> private memory的基址，要转成每个workgroup的基地址， wf_size*wg_size*pdsSize
 };
 
+
 struct kernel_info{
-    map<int, bool> blk_list;
-    int kernel_id;
-    kernel_state state;
-    kernel_info(int input_kernel_id, map<int, bool> input_blk_list):
+    map<int, _state> blk_list;
+    _state state;
+    kernel_info(map<int, _state> input_blk_list, _state stateIn):
                 blk_list(std::move(input_blk_list)),
-                kernel_id(input_kernel_id){}
+                state(stateIn){}
 };
 
 struct context_info{
     uint64_t contextID;
-    vector<kernel_info> kernelList;
+    map<uint64_t, kernel_info> kernelList;
     uint64_t root;
     Memory ram;
     context_info(uint64_t taskID)
                 :contextID(taskID),ram(RAM_RANGE)
     {
         root = 0;
+    }
+    bool context_finished(){
+        for(auto const &it : kernelList) {
+            if(it.second.state ==  UNFINISH)
+                return false;
+        }
+        return true;
     }
 };
 
@@ -175,23 +181,23 @@ public:
      * @return int 
      */
     int download(uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
-    int start(int taskID, void* metaData, int kernelID);
+    int start(int taskID, void* metaData);
     int wait(uint64_t time);
     queue<int> get_finished_kernel();
+    queue<int> get_finished_context();
     queue<int> execute_all_kernel();
 
-    int parse_metaData(void *metaData);
+
 
 private:
 
     int push_kernel(uint64_t taskID, uint64_t kernelID, map<int, bool>input_blk_list);
-
+    uint64_t parse_metaData(uint64_t taskID, void *metaData, host_port_t* devicePort);
 
     Processor processor_;
     Memory ram_;
     future<int> last_task_;
     queue<int> finished_kernel_l; ///< 已经执行完成的任务ID
-    list<kernel_info> kernel_list; ///< 发送到设备执行的任务，list每个元素对应一个任务，每个任务由多个block组成
     addr_manager addrManager_;
     map<int, context_info> contextList_;
 };

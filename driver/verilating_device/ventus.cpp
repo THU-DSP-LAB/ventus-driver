@@ -140,10 +140,7 @@ extern int vt_start(vt_device_h hdevice, void* metaData, uint64_t taskID) {
     if(hdevice == nullptr)
         return -1;
     auto device = (vt_device *) hdevice;
-    /*解析metaData，得到input_port和num_blocks*/
-    host_port_t* input_port;
-    int num_blocks;
-    device->start(taskID, metaData, taskID);
+    device->start(taskID, metaData);
     return 0;
 }
 extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
@@ -153,11 +150,11 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     return device->wait(timeout);
 }
 
-extern int vt_finish_all_kernel(vt_device_h hdevice, queue<int> *finished_list) {
+extern int vt_finish_all_kernel(vt_device_h hdevice, queue<int> *finished_kernel_list) {
     if(hdevice == nullptr)
         return -1;
     auto device = (vt_device*) hdevice;
-    *finished_list = device->execute_all_kernel();
+    *finished_kernel_list = device->execute_all_kernel();
     return 0;
 }
 

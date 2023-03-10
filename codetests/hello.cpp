@@ -1,5 +1,7 @@
 #include <iostream>
 #include <vector>
+#include <queue>
+#include <cstdlib>
 
 
 #include "testlib.h"
@@ -35,22 +37,9 @@ void testp(int* p) {
     *p = 5;
 }
 
-int main() {
-    //binary search
-/*    vector<int>v{ 8,11,19,23,27,33,45,55,67,98 };
-    vector<int>x{8};
-    x.insert(x.begin(), 3);
-    cout << *(x.end() -1 ) << endl;
-    for(auto it : x ) cout << it <<endl;
-    cout << search_binary(x, 4);*/
 
- /*   int a = 65;
-    cout << aligned_size(a, 64)<<endl;
-    return 0;
-*/
-    int *p = new int;
-    *p =11;
-    cout << *p << endl;
-    testp(p);
-    cout << *p << endl;
+
+int main()
+{
+
 }

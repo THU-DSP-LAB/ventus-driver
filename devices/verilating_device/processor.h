@@ -23,12 +23,12 @@
 #include "vt_config.h"
 #include "vt_utils.h"
 
+#include "controller.cpp"
+#include "VMMUtest.h"
+
 
 #pragma once
 namespace ventus {
-
-
-// class Memory;
 
 class Processor{
 public:
@@ -36,8 +36,8 @@ public:
     ~Processor();
 
     void attach_ram(Memory* ram);
-    int start(const host_port_t* input_sig );
-    int run(host_port_t* input_sig, int kernel_id);
+    int start(const host_port_t* input_sig);
+    int run(host_port_t* input_sig);
     std::queue<int> wait(uint64_t cycle);
 private:
 
@@ -45,11 +45,42 @@ private:
     Impl* impl_;
 };
 
-//    void test_proc() {
-//        std::cout << "hello world from processor.cpp, function test_proc()" << std::endl;
-//    }
-////
+
+
+class Processor::Impl{
+public:
+    Impl();
+    ~Impl();
+    void attach_ram(Memory* ram);
+    int run(host_port_t* input_sig);
+    std::queue<int> wait(uint64_t cycle);
+    std::queue<int> finished_block();
+
+    ///@deprecated
+    void cout_flush();
+
+private:
+    void reset();
+    void tick();
+    void get_ram_bits_port();
+    void eval(int clk);
+
+#ifdef DEBUG_GPGPU
+        VVentus *device_; ///< GPGPU
+#endif
+#ifdef DEBUG_MMU
+        VMMUtest *device_;
+#endif
+        Memory *ram_; ///< GPGPU的ram
+
+        std::queue<int> finished_block_queue;
+
+        Controller mem_ctrl;
+
+    };
  void test_proc();
+
+
 }
 
 #endif
