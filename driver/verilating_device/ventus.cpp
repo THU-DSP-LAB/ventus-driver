@@ -51,11 +51,11 @@ using namespace ventus;
 
 
 /// open the device and connect to it
-extern int vt_dev_open(vt_device_h hdevice){
+extern int vt_dev_open(vt_device_h* hdevice){
     if(hdevice == nullptr)
         return -1;
     PCOUT_INFO << "vt_dev_open : hello world from ventus.cpp" << endl;
-    hdevice = new vt_device();
+    *hdevice = new vt_device();
     return 0;
 }
 /// Close the device when all the operations are done
@@ -98,7 +98,7 @@ extern int vt_buf_free(vt_buffer_h hdevice, uint64_t size, uint64_t *vaddr, uint
 extern int vt_root_mem_alloc(vt_device_h hdevice, int taskID) {
     if( hdevice == nullptr)
         return -1;
-    auto device = (vt_device*) hdevice;
+    vt_device* device = (vt_device*) hdevice;
     return device->create_device_mem(taskID);
 }
 
@@ -158,6 +158,7 @@ extern int vt_finish_all_kernel(vt_device_h hdevice, queue<int> *finished_kernel
     return 0;
 }
 
+/*
 extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t size, int taskID) {
   int err = 0;
 
@@ -174,7 +175,7 @@ extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint6
   vt_buffer_h buffer;
   err = vt_buf_alloc(device, buffer_transfer_size, &buffer);
   if (err != 0)
-    return -1; 
+    return -1;
 
   // get buffer address
   auto buf_ptr = (uint8_t*)vt_host_ptr(buffer);
@@ -188,11 +189,13 @@ extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint6
     auto chunk_size = std::min<uint64_t>(buffer_transfer_size, size - offset);
     std::memcpy(buf_ptr, (uint8_t*)content + offset, chunk_size);
 
-    /*printf("***  Upload Kernel to 0x%0x: data=", kernel_base_addr + offset);
+    */
+/*printf("***  Upload Kernel to 0x%0x: data=", kernel_base_addr + offset);
     for (int i = 0, n = ((chunk_size+7)/8); i < n; ++i) {
       printf("%08x", ((uint64_t*)((uint8_t*)content + offset))[n-1-i]);
     }
-    printf("\n");*/
+    printf("\n");*//*
+
 
 
     err = vt_copy_to_dev(buffer, kernel_base_addr + offset, chunk_size, taskID);
@@ -218,7 +221,7 @@ extern int vt_upload_kernel_file(vt_device_h device, const char* filename, int t
   // read file content
   ifs.seekg(0, ifs.end);
   auto size = ifs.tellg();
-  auto content = new char [size];   
+  auto content = new char [size];
   ifs.seekg(0, ifs.beg);
   ifs.read(content, size);
 
@@ -230,3 +233,4 @@ extern int vt_upload_kernel_file(vt_device_h device, const char* filename, int t
 
   return err;
 }
+*/

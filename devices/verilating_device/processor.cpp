@@ -33,7 +33,6 @@
 
 
 #include "vt_memory.h"
-#include "controller.cpp"
 
 #include <iostream>
 #include <unordered_map>

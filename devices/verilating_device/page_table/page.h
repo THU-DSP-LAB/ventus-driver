@@ -119,6 +119,19 @@ public:
         current_block = blocks->begin();
         blocks->push_back(Block(max_range, SV39::PageSize * 1, false));
     }
+    PhysicalMemory(const PhysicalMemory& p) {
+        if(p.blocks != nullptr) {
+            this->blocks = new std::list<Block>;
+            for(auto it : *p.blocks) {
+                blocks->push_back(it);
+            }
+            max_range = p.max_range;
+            current_block = this->blocks->begin();
+        }
+        else
+            this->blocks = nullptr;
+    }
+
     ~PhysicalMemory(){
         delete blocks;
     }

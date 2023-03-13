@@ -38,7 +38,7 @@ typedef void* vt_buffer_h; ///< 类型定义，指向vt_buffer类的指针
 /// @brief 【已实现】打开并连接一个GPGPU设备
 /// @param hdevice 指向设备的指针
 /// @return 若无错误则返回0，否则返回-1
-int vt_dev_open(vt_device_h hdevice);
+int vt_dev_open(vt_device_h* hdevice);
 
 /// @brief 【已实现】当所有操作完成时，关闭设备
 /// @param hdevice 指向设备的指针
@@ -48,7 +48,18 @@ int vt_dev_close(vt_device_h hdevice);
 /// return device configurations
 // int vt_dev_caps(vt_device_h* hdevice, uint32_t caps_id, uint64_t *value);
 
+/// @brief 【已实现】以任务为单位，在GPGPU设备上分配虚拟内存空间（创建根页表）
+/// @param hdevice 指向设备的指针
+/// @param taskID context ID，需要从0开始迭加分配
+/// @return 若无错误则返回0，否则返回-1
+int vt_root_mem_alloc(vt_device_h hdevice, int taskID);
 
+
+/// @brief 【已实现】释放任务对应的虚拟内存空间和已分配的物理空间（删除根页表）
+/// @param hdevice 指向设备的指针
+/// @param taskID context ID
+/// @return 若无错误则返回0，否则返回-1
+int vt_root_mem_free(vt_device_h hdevice, int taskID);
 /// @brief 【已实现】为设备分配buffer
 /// @param hdevice 指向设备的指针
 /// @param size buffer大小
@@ -68,21 +79,6 @@ int vt_buf_alloc(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int BUF_TY
 /// @return 若无错误则返回0，否则返回-1
 int vt_buf_free(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID);
 
-
-/// @brief 【已实现】以任务为单位，在GPGPU设备上分配虚拟内存空间（创建根页表）
-/// @param hdevice 指向设备的指针
-/// @param taskID context ID，需要从0开始迭加分配
-/// @return 若无错误则返回0，否则返回-1
-int vt_root_mem_alloc(vt_device_h hdevice, int taskID);
-
-
-/// @brief 【已实现】释放任务对应的虚拟内存空间和已分配的物理空间（删除根页表）
-/// @param hdevice 指向设备的指针
-/// @param taskID context ID
-/// @return 若无错误则返回0，否则返回-1
-int vt_root_mem_free(vt_device_h hdevice, int taskID);
-
-
 /// @brief 【已实现】将数据从buffer复制到设备内存
 /// @param hdevice 指向设备的指针
 /// @param dev_vaddr 设备端保存数据的起始虚拟地址
@@ -100,6 +96,7 @@ int vt_copy_to_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *src_addr, uint
 /// @param dst_addr 数据的目标地址
 /// @param size 数据大小
 /// @param taskID 任务ID
+/// @param kernelID kernel ID
 /// @return 若无错误则返回0，否则返回-1
 int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
 

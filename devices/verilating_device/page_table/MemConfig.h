@@ -7,3 +7,6 @@
 #define LOCALMEM_BASE   0x10000000
  
 #define BUFSIZE         0x10000000
+
+#define READ_WRITE 0
+#define READ_ONLY 1

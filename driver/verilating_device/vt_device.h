@@ -16,7 +16,6 @@
  * </table>
  */
 #include "processor.h"
-#include "controller.cpp"
 #include "vt_utils.h"
 #include "verilating_device/vt_config.h"
 #include <future>
@@ -61,12 +60,19 @@ struct context_info{
     uint64_t contextID;
     map<uint64_t, kernel_info> kernelList;
     uint64_t root;
-    Memory ram;
-    context_info(uint64_t taskID)
-                :contextID(taskID),ram(RAM_RANGE)
-    {
+    Memory ram = Memory(RAM_RANGE);
+    context_info(uint64_t taskID) : ram(RAM_RANGE){
+        contextID = taskID;
+        cout << RAM_RANGE <<endl;
         root = 0;
     }
+    context_info(const context_info &c) {
+        ram = Memory(c.ram);
+        contextID = c.contextID;
+        root = c.root;
+        kernelList = c.kernelList;
+    }
+
     bool context_finished(){
         for(auto const &it : kernelList) {
             if(it.second.state ==  UNFINISH)
@@ -109,7 +115,7 @@ public:
     addr_manager(){};
     ~addr_manager();
 
-    void attatch_ram(Memory* ram);
+//    void attatch_ram(Memory* ram);
     int createNewContext(uint64_t contextID);
     int allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size, int BUF_TYPE);
     int releaseMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size);
@@ -131,9 +137,8 @@ private:
 class vt_device {
 public:
     vt_device()
-        :ram_(RAM_RANGE){
-            processor_.attach_ram(&ram_);
-            addrManager_.attatch_ram(&ram_);
+        {
+//            addrManager_.attatch_ram(&ram_);
             test_proc();
             // list<unordered_map<int, bool>> task_by_block_l;
             // vector<uint64_t> roots;
@@ -143,7 +148,7 @@ public:
             last_task_.wait();
     }
 
-    int create_device_mem(int taskID);
+    int create_device_mem(uint64_t taskID);
 
     /**
      * @brief 释放分配的空间，释放根页表所指向的空间
@@ -195,11 +200,10 @@ private:
     uint64_t parse_metaData(uint64_t taskID, void *metaData, host_port_t* devicePort);
 
     Processor processor_;
-    Memory ram_;
     future<int> last_task_;
     queue<int> finished_kernel_l; ///< 已经执行完成的任务ID
     addr_manager addrManager_;
-    map<int, context_info> contextList_;
+    map<uint64_t, context_info> contextList_;
 };
 
 

@@ -14,6 +14,8 @@
  * </table>
  */
 
+#pragma once
+
 #ifndef PROCESSOR_H_
 #define PROCESSOR_H_
 
@@ -27,7 +29,6 @@
 #include "VMMUtest.h"
 
 
-#pragma once
 namespace ventus {
 
 class Processor{

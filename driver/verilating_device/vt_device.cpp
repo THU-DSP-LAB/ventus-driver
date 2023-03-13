@@ -6,13 +6,14 @@
 #include "MemConfig.h"
 //#include "processor.h"
 
-int vt_device::create_device_mem(int taskID) {
+int vt_device::create_device_mem(uint64_t taskID) {
     if(contextList_.find(taskID) != contextList_.end()) {
         PCOUT_ERROR << "the taskID of " << taskID <<"has been created, check your input!" <<endl;
         return -1;
     }
     int ret0 = addrManager_.createNewContext(taskID);
-    contextList_.emplace(taskID, context_info(taskID));
+    context_info tmp = context_info(taskID);
+    contextList_.emplace(taskID,tmp);
     auto it = contextList_.find(taskID);
     uint64_t ret1 = it->second.ram.createRootPageTable();
     it->second.root = ret1;
@@ -104,6 +105,7 @@ int vt_device::start(int taskID, void* metaData){
         PCOUT_ERROR << "the context of ID "<< taskID << " not exists, check your input!" << endl;
         return -1;
     }
+    processor_.attach_ram(&contextList_.find(taskID)->second.ram);
     //each function call send one block of a kernel
     for (int i = 0; i < wgNum; ++i) {
         uint64_t kernelID = inputData->kernel_id;
@@ -285,8 +287,25 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
         return -1;
     }
             if(contextMemory_[contextID] == nullptr) {
+                switch (BUF_TYPE) {
+                    case READ_ONLY:
+                        if(size < RWDATA_BASE - RODATA_BASE) {
+                            *vaddr = RODATA_BASE;
+                            break;
+                        } else {
+                            PCOUT_ERROR << "buffer size too large, error!" << endl;
+                            return -1;
+                        }
+                    case READ_WRITE: if(size < RWDATA_BASE - RODATA_BASE) {
+                            *vaddr = RWDATA_BASE;
+                            break;
+                        } else {
+                            PCOUT_ERROR << "buffer size too large, error!" << endl;
+                            return -1;
+                        }
+                    default: break;
+                }
                 currentItem = new addrItem(kernelID, contextID, *vaddr, size);
-
                 contextMemory_[contextID] = currentItem;
             }
             else {
@@ -341,14 +360,14 @@ void addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size
                     newVaddr = curAddrFrame;
             //地址已确定，检查范围是否符合BUF_TYPE
             switch (BUF_TYPE) {
-                case 0: if((newVaddr > RODATA_BASE) && (newVaddr < RWDATA_BASE)) {
+                case READ_ONLY: if((newVaddr > RODATA_BASE) && (newVaddr < RWDATA_BASE)) {
                         *vaddr = newVaddr;
                         break;
                     } else {
                         PCOUT_ERROR << "vaddr range" << *vaddr <<" not match with BUF_TYPE!" << endl;
                         break;
                     }
-                case 1: if((newVaddr > RWDATA_BASE)) {
+                case READ_WRITE: if((newVaddr > RWDATA_BASE)) {
                         *vaddr = newVaddr;
                         break;
                     } else {
@@ -418,3 +437,4 @@ bool addr_manager::findKernelID(uint64_t kernelID) {
     }
     return false;
 }
+

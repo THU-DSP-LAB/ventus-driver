@@ -26,9 +26,10 @@ const char* kernel_file = "kernel.bin";
 int test = 1;
 uint32_t count = 0;
 int default_taskID = 0;
+int default_kernelID = 0;
 
 vt_device_h device = nullptr;
-vt_buffer_h staging_buf = nullptr;
+
 
 host_port_t* input_sig = new host_port_t;
 
@@ -70,12 +71,9 @@ static void parse_args(int argc, char **argv) {
 }
 
 void cleanup() {
-  if (staging_buf) {
-    vt_buf_free(staging_buf);
-  }
+
   if (device) {
-    vt_mem_free(device,  default_taskID);
-    vt_mem_free(device,  default_taskID);
+
     vt_dev_close(device);
   }
 }
@@ -91,9 +89,15 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
 
   int num_blocks_8 = (64 * num_blocks) / 8;
 
+    uint64_t *p1 = new uint64_t[num_blocks_8];
+    void *src_addr = p1;
+    uint64_t *p2 = new uint64_t[num_blocks_8];
+    void *dst_addr = p2;
+    uint64_t buf_size = sizeof(uint64_t)*num_blocks_8;
+
   // update source buffer
   for (int i = 0; i < num_blocks_8; ++i) {
-    ((uint64_t*)vt_host_ptr(staging_buf))[i] = shuffle(i, value);
+      *((uint64_t*)src_addr + i)= shuffle(i, value);
   }
 
   /*for (int i = 0; i < num_blocks; ++i) {
@@ -105,26 +109,29 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
   }*/
   
   // write source buffer to local memory
-  std::cout << "write source buffer to local memory" << std::endl;
+    uint64_t *buf_addr = new uint64_t;
+    RT_CHECK(vt_buf_alloc(device, buf_size, buf_addr, READ_ONLY, default_taskID, default_kernelID));
+
+    std::cout << "write source buffer to local memory" << std::endl;
   auto t0 = std::chrono::high_resolution_clock::now();
-  RT_CHECK(vt_copy_to_dev(staging_buf, dev_addr, 64 * num_blocks, taskID));
+  RT_CHECK(vt_copy_to_dev(device, *buf_addr, src_addr, buf_size, default_taskID, default_kernelID));
   auto t1 = std::chrono::high_resolution_clock::now();
 
   // clear destination buffer
   for (int i = 0; i < num_blocks_8; ++i) {
-    ((uint64_t*)vt_host_ptr(staging_buf))[i] = 0;
+      *((uint64_t*)dst_addr + i) = 0;
   }
 
   // read destination buffer from local memory
   std::cout << "read destination buffer from local memory" << std::endl;
   auto t2 = std::chrono::high_resolution_clock::now();
-  RT_CHECK(vt_copy_from_dev(staging_buf, dev_addr, 64 * num_blocks, taskID));
+  RT_CHECK(vt_copy_from_dev(device, *buf_addr, dst_addr, buf_size, default_taskID, default_kernelID));
   auto t3 = std::chrono::high_resolution_clock::now();
 
   // verify result
   std::cout << "verify result" << std::endl;
   for (int i = 0; i < num_blocks_8; ++i) {
-    auto curr = ((uint64_t*)vt_host_ptr(staging_buf))[i];
+    auto curr = (*(uint64_t*)dst_addr + i);
     auto ref = shuffle(i, value);
     if (curr != ref) {
       std::cout << "error at 0x" << std::hex << (dev_addr + 8 * i)
@@ -149,11 +156,12 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
   elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start).count();  
   printf("Total elapsed time: %lg ms\n", elapsed);
 
-  vt_mem_free(device, taskID);
+  vt_buf_free(device, buf_size, buf_addr, default_taskID, default_kernelID);
   return 0;
 }
 
-int run_kernel_test(const kernel_arg_t& kernel_arg, 
+/*
+int run_kernel_test(const kernel_arg_t& kernel_arg,
                     uint32_t buf_size, 
                     uint32_t num_points,
                     int taskID) {
@@ -229,6 +237,7 @@ int run_kernel_test(const kernel_arg_t& kernel_arg,
 
   return 0;
 }
+*/
 
 /// 生成一个随机的kernel.bin文件，用于kernel test
 /// \param taskID
@@ -248,8 +257,6 @@ void create_test_kernel_bin(int taskID, size_t value) {
 int main(int argc, char *argv[]) {
 
     size_t value = 2;
-    int taskID = 0;
-    int kernelID = 0;
 
     input_sig->host_req_wg_id = HOST_REQ_WG_ID;
     input_sig->host_req_num_wf = HOST_REQ_NUM_WF;
@@ -287,7 +294,7 @@ int main(int argc, char *argv[]) {
   // allocate device memory
 //  RT_CHECK(vt_mem_alloc(device, buf_size, &kernel_arg.src_addr, default_taskID));
   // kernel_arg.src_addr = value;
-  RT_CHECK(vt_mem_alloc(device, default_taskID));
+  RT_CHECK(vt_root_mem_alloc(device, default_taskID));
   // kernel_arg.dst_addr = value;
 
   kernel_arg.count = num_points;
@@ -299,7 +306,8 @@ int main(int argc, char *argv[]) {
 
   std::cout << "allocate shared memory" << std::endl;
   uint32_t alloc_size = std::max<uint32_t>(buf_size, sizeof(kernel_arg_t));
-  RT_CHECK(vt_buf_alloc(device, alloc_size, &staging_buf));
+  uint64_t *buf_addr = new uint64_t;
+  RT_CHECK(vt_buf_alloc(device, alloc_size, buf_addr, READ_ONLY, default_taskID, default_kernelID));
 
   // run tests  
   if (0 == test || -1 == test) {
@@ -307,7 +315,7 @@ int main(int argc, char *argv[]) {
     RT_CHECK(run_memcopy_test(kernel_arg.src_addr, 0x0badf00d40ff40ff, num_blocks, default_taskID));
   }
 
-  if (1 == test || -1 == test) {
+/*  if (1 == test || -1 == test) {
 //      vt_mem_free(device, 0, default_taskID);
       create_test_kernel_bin(default_taskID, 0x0badf00d40ff40ff);
     // upload program
@@ -328,9 +336,10 @@ int main(int argc, char *argv[]) {
       RT_CHECK(vt_copy_to_dev(staging_buf, BUF_PARA_BASE, sizeof(kernel_arg_t), default_taskID));
     }
 
+
     std::cout << "run kernel test" << std::endl;
     RT_CHECK(run_kernel_test(kernel_arg, buf_size, num_points, default_taskID));
-  }
+  }*/
 
   // cleanup
   std::cout << "cleanup" << std::endl;  

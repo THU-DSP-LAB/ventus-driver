@@ -41,5 +41,6 @@ void testp(int* p) {
 
 int main()
 {
-
+    int* p;
+    if(p == nullptr) cout << 1;
 }

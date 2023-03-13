@@ -1,6 +1,7 @@
 #include <cstdint>
 #include "vt_memory.h"
 #include "vt_utils.h"
+#pragma once
 
 struct TLBundleA{ // req
     uint8_t opcode;
