@@ -23,7 +23,7 @@ using namespace ventus;
 ///////////////////////////////////////////////////////////////////////////////
 
 const char* kernel_file = "kernel.bin";
-int test = 1;
+int test = 0;
 uint32_t count = 0;
 int default_taskID = 0;
 int default_kernelID = 0;
@@ -97,7 +97,8 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
 
   // update source buffer
   for (int i = 0; i < num_blocks_8; ++i) {
-      *((uint64_t*)src_addr + i)= shuffle(i, value);
+      ((uint64_t*)src_addr)[i]= shuffle(i, value);
+      std::cout << "src_data[" <<i<<"]: "<< std::hex<<((uint64_t*)src_addr)[i]<< std::endl;
   }
 
   /*for (int i = 0; i < num_blocks; ++i) {
@@ -119,7 +120,7 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
 
   // clear destination buffer
   for (int i = 0; i < num_blocks_8; ++i) {
-      *((uint64_t*)dst_addr + i) = 0;
+      ((uint64_t*)dst_addr)[i] = 0;
   }
 
   // read destination buffer from local memory
@@ -131,7 +132,7 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
   // verify result
   std::cout << "verify result" << std::endl;
   for (int i = 0; i < num_blocks_8; ++i) {
-    auto curr = (*(uint64_t*)dst_addr + i);
+    auto curr = ((uint64_t*)dst_addr)[i];
     auto ref = shuffle(i, value);
     if (curr != ref) {
       std::cout << "error at 0x" << std::hex << (dev_addr + 8 * i)
@@ -145,6 +146,7 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
     std::cout << "FAILED!" << std::endl;
     return 1;
   }
+    std::cout << "No errors found, memory copy test passed!" << std::endl;
 
   auto time_end = std::chrono::high_resolution_clock::now();
 
@@ -156,7 +158,28 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
   elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start).count();  
   printf("Total elapsed time: %lg ms\n", elapsed);
 
+    {
+        std::cout << "verify result" << std::endl;
+        uint64_t *test_addr;
+        RT_CHECK(vt_buf_alloc(device, buf_size, test_addr, READ_WRITE, default_taskID, default_kernelID));
+        RT_CHECK(vt_copy_to_dev(device, *test_addr, src_addr, buf_size, default_taskID, default_kernelID));
+        RT_CHECK(vt_copy_from_dev(device, *test_addr, dst_addr, buf_size, default_taskID, default_kernelID));
+        std::cout << "verify result" << std::endl;
+        for (int i = 0; i < num_blocks_8; ++i) {
+            auto curr = ((uint64_t*)dst_addr)[i];
+            auto ref = shuffle(i, value);
+            if (curr != ref) {
+                std::cout << "error at 0x" << std::hex << (dev_addr + 8 * i)
+                          << ": actual 0x" << curr << ", expected 0x" << ref << std::endl;
+                ++errors;
+            }
+        }
+        vt_buf_free(device, buf_size, test_addr, default_taskID, default_kernelID);
+
+    }
+
   vt_buf_free(device, buf_size, buf_addr, default_taskID, default_kernelID);
+
   return 0;
 }
 

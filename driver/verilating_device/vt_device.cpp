@@ -286,7 +286,7 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
         PCOUT_ERROR << "Context of ID" << contextID <<" has not created, can't allocate memory!" << endl;
         return -1;
     }
-            if(contextMemory_[contextID] == nullptr) {
+
                 switch (BUF_TYPE) {
                     case READ_ONLY:
                         if(size < RWDATA_BASE - RODATA_BASE) {
@@ -305,11 +305,12 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
                         }
                     default: break;
                 }
+    if(contextMemory_.at(contextID) == nullptr) {
                 currentItem = new addrItem(kernelID, contextID, *vaddr, size);
-                contextMemory_[contextID] = currentItem;
+                contextMemory_.at(contextID) = currentItem;
             }
             else {
-                currentItem = contextMemory_[contextID];
+                currentItem = contextMemory_.at(contextID);
                 findVaddr(&currentItem, vaddr, size, BUF_TYPE);
                 insertNewItem(currentItem, contextID, kernelID, vaddr, size);
             }
@@ -341,37 +342,54 @@ void addr_manager::insertNewItem(addrItem *currentItem, uint64_t contextID, uint
                                  uint64_t size) {
     auto tmp = new addrItem(kernelID, contextID, *vaddr, size);
     tmp->succContextItem = (currentItem)->succContextItem;
-    (currentItem)->succContextItem = tmp;
     tmp->prevContextItem = currentItem;
-    (currentItem)->succContextItem->prevContextItem = tmp;
+    if(currentItem->succContextItem != nullptr)
+        currentItem->succContextItem->prevContextItem = tmp;
+    (currentItem)->succContextItem = tmp;
 
 }
 
 void addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE) {
 
-    while(*rootItem != nullptr) {
-        uint64_t curAddrFrame = (*rootItem)->vaddr + (*rootItem)->size;
+    while((*rootItem) != nullptr) {
+
+        uint64_t curAddr;
+        switch (BUF_TYPE) {
+            case READ_ONLY:
+                curAddr = (*rootItem)->vaddr + (*rootItem)->size;
+                break;
+            case READ_WRITE:
+                while ((*rootItem)->vaddr < RWDATA_BASE && (*rootItem)->succContextItem != nullptr) {
+                    *rootItem = (*rootItem)->succContextItem;
+                }
+                curAddr = RWDATA_BASE;
+                break;
+        }
         uint64_t newVaddr;
-        if(curAddrFrame < *vaddr) {
+
             if((*rootItem)->succContextItem == nullptr){
-                newVaddr = curAddrFrame;
+                newVaddr = curAddr;
             }else
-                if((*vaddr + size < (*rootItem)->succContextItem->vaddr))
-                    newVaddr = curAddrFrame;
+                if((size <= ((*rootItem)->succContextItem->vaddr - curAddr)))
+                    newVaddr = curAddr;
+                else {
+                    (*rootItem) = (*rootItem)->succContextItem;
+                    continue;
+                }
             //地址已确定，检查范围是否符合BUF_TYPE
             switch (BUF_TYPE) {
-                case READ_ONLY: if((newVaddr > RODATA_BASE) && (newVaddr < RWDATA_BASE)) {
+                case READ_ONLY: if((newVaddr >= RODATA_BASE) && (newVaddr < RWDATA_BASE)) {
                         *vaddr = newVaddr;
                         break;
                     } else {
-                        PCOUT_ERROR << "vaddr range" << *vaddr <<" not match with BUF_TYPE!" << endl;
+                        PCOUT_ERROR << "vaddr range" << *vaddr <<" not match with BUF_TYPE of READ_ONLY!" << endl;
                         break;
                     }
-                case READ_WRITE: if((newVaddr > RWDATA_BASE)) {
+                case READ_WRITE: if((newVaddr >= RWDATA_BASE)) {
                         *vaddr = newVaddr;
                         break;
                     } else {
-                        PCOUT_ERROR << "vaddr range" << *vaddr <<" not match with BUF_TYPE!" << endl;
+                        PCOUT_ERROR << "vaddr range" << *vaddr <<" not match with BUF_TYPE of READ_WRITE!" << endl;
                         break;
                     }
                 default: {
@@ -381,11 +399,6 @@ void addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size
             }
             //跳出while循环
             break;
-
-        }else {
-            (*rootItem) = (*rootItem)->succContextItem;
-            continue;
-        }
 
     }
 }
@@ -397,11 +410,18 @@ int addr_manager::releaseMemory(uint64_t contextID, uint64_t kernelID, uint64_t 
 //    for(auto it : contextList_) {
 //        if(it == contextID) {
             b_contextExist = true;
-            auto tmp = contextMemory_[contextID];
+            auto tmp = contextMemory_.at(contextID);
             while(tmp != nullptr) {
                 if(tmp->vaddr == *vaddr) {
-                    tmp->prevContextItem->succContextItem = tmp->succContextItem;
-                    tmp->succContextItem->prevContextItem = tmp->prevContextItem;
+                    if(tmp->prevContextItem == nullptr && tmp->succContextItem == nullptr);
+                    else if(tmp->prevContextItem == nullptr)
+                        tmp->succContextItem->prevContextItem = nullptr;
+                    else if(tmp->succContextItem == nullptr)
+                        tmp->prevContextItem->succContextItem = nullptr;
+                    else {
+                        tmp->prevContextItem->succContextItem = tmp->succContextItem;
+                        tmp->succContextItem->prevContextItem = tmp->prevContextItem;
+                    }
                     delete tmp;
                     b_vaddrExist = true;
                     break;

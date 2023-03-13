@@ -65,7 +65,7 @@ Processor::Impl::Impl():mem_ctrl(NUM_THREAD) {
     }
 Processor::Impl::~Impl(){
         delete device_;
-        mem_ctrl.~Controller();
+//        mem_ctrl.~Controller();
     }
 
 void Processor::Impl::attach_ram(Memory* ram) {ram_ = ram;}

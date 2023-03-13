@@ -66,8 +66,7 @@ struct context_info{
         cout << RAM_RANGE <<endl;
         root = 0;
     }
-    context_info(const context_info &c) {
-        ram = Memory(c.ram);
+    context_info(const context_info &c): ram(c.ram) {
         contextID = c.contextID;
         root = c.root;
         kernelList = c.kernelList;
@@ -125,6 +124,14 @@ public:
 private:
 
     void findVaddr(addrItem** rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE);
+    /**
+     * 插入一个addrItem到currentItem的后面
+     * @param currentItem
+     * @param contextID
+     * @param kernelID
+     * @param vaddr
+     * @param size
+     */
     void insertNewItem(addrItem* currentItem, uint64_t contextID, uint64_t kernelID,uint64_t *vaddr, uint64_t size);
 
 //    list<uint64_t> contextList_;

@@ -7,6 +7,7 @@
 #include "testlib.h"
 
 using namespace std;
+/*
 
 int search_binary(vector<int>v, int value)
 {
@@ -32,15 +33,19 @@ int search_binary(vector<int>v, int value)
     return high;
 }
 
-
-void testp(int* p) {
-    *p = 5;
-}
+*/
 
 
 
 int main()
 {
-    int* p;
-    if(p == nullptr) cout << 1;
+
+    int* p = new int[10];
+    void* p1 = p;
+    for (int i = 0; i < 10; ++i) {
+        ((int*)p1)[i] = i;
+    }
+    for (int i = 0; i < 10; ++i) {
+        cout << p[i] <<endl;
+    }
 }
