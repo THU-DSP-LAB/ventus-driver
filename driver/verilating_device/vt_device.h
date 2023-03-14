@@ -1,9 +1,8 @@
 /**
  * @file vt_device.h
  * @brief 与驱动提供的API对接的类的声明
- * 这一版没有实现多任务（每个任务具有一个独立的根页表的情况，后续再跟进）
- * @author yangzexia (yang-zx17@qq.com)
- * @version 1.0
+ * @author YangZexia (yang-zx17@qq.com)
+ * @version 1.2
  * @date 2022-11-24
  * 
  * @copyright Copyright (c) {2022}  DSPLAB@Tsinghua University
@@ -11,8 +10,9 @@
  * @par 修改日志:
  * <table>
  * <tr><th>Date       <th>Version <th>Author  <th>Description
- * <tr><td>2022-11-24 <td>1.0     <td>wangh     <td>首次创建
+ * <tr><td>2022-11-24 <td>1.0     <td>YangZexia     <td>首次创建
  * <tr><td>2022-12-14 <td>1.1
+ * <tr><td>2022-11-24 <td>1.2     <td>YangZexia     <td>增加了多任务（多个根页表）机制
  * </table>
  */
 #include "processor.h"

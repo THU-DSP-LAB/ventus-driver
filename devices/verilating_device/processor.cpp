@@ -77,24 +77,6 @@ void Processor::Impl::attach_ram(Memory* ram) {ram_ = ram;}
       * @return int 
       */
 int Processor::Impl::run(host_port_t* input_sig) {
-//        int delay = 0;
-//
-//        while(delay < RUN_DELAY) {
-//            if(all_block_busy()) {
-//                this->tick();
-//                delay++;
-//            } else
-//                break;
-//        }
-//
-//        // 经过最大等待时间仍然没有空闲block
-//        if(delay == RUN_DELAY) {
-//        #ifdef DEBUG_PROC
-//            std::cout << "no idle block" << std::endl;
-//        #endif
-//            return -1;
-//        }
-        std::cout << MAX_BLOCK_PER_SM << std::endl;
 
         while(device_->io_host_req_ready != true) {
             this->tick();
@@ -186,7 +168,6 @@ void Processor::Impl::get_ram_bits_port() {
         device_->io_out_d_bits_size = mem_ctrl.rsp->size;
         device_->io_out_d_bits_source = mem_ctrl.rsp->source;
         if(mem_ctrl.rsp->data == nullptr) {
-            std::cerr << "response from mem is nullptr" << std::endl;
             mem_ctrl.rsp->data = new uint64_t;
         }
         device_->io_out_d_bits_data = *(mem_ctrl.rsp->data);
