@@ -156,7 +156,6 @@ void Processor::Impl::reset(){
      */
 void Processor::Impl::tick(){
         /// 读取TLB_A和TLB_D的值并接到GPGPU,
-        /// @todo: 改成硬件对应的名称
         {
             get_ram_bits_port();
         }

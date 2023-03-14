@@ -13,7 +13,7 @@ int vt_device::create_device_mem(uint64_t taskID) {
     }
     int ret0 = addrManager_.createNewContext(taskID);
     context_info tmp = context_info(taskID);
-    contextList_.emplace(taskID,tmp);
+    contextList_.emplace(taskID,context_info(taskID));
     auto it = contextList_.find(taskID);
     uint64_t ret1 = it->second.ram.createRootPageTable();
     it->second.root = ret1;
@@ -86,8 +86,10 @@ int vt_device::download(uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint6
  */
 int vt_device::start(int taskID, void* metaData){
     //parse metaData
+
     host_port_t *devicePort = new host_port_t;
     auto inputData = (meta_data *)metaData;
+#ifndef DEBUG_MMU
     uint64_t wgNum = inputData->kernel_size[0] * inputData->kernel_size[1]*inputData->kernel_size[2];
     devicePort->host_req_gds_baseaddr = 128;
     devicePort->host_req_gds_size_total = 0;
@@ -100,6 +102,20 @@ int vt_device::start(int taskID, void* metaData){
     devicePort->host_req_start_pc = 0;
     devicePort->host_req_wf_size = inputData->wf_size;
     devicePort->host_req_wg_id = 0;
+#else
+    uint64_t wgNum = 4;
+    devicePort->host_req_gds_baseaddr = 128;
+    devicePort->host_req_gds_size_total = 0;
+    devicePort->host_req_lds_size_total = 128* wgNum;
+    devicePort->host_req_num_wf = 4;
+    devicePort->host_req_sgpr_size_per_wf = 32;
+    devicePort->host_req_sgpr_size_total = 32;
+    devicePort->host_req_vgpr_size_total = 32;
+    devicePort->host_req_vgpr_size_per_wf = 32;
+    devicePort->host_req_start_pc = 0;
+    devicePort->host_req_wf_size = 32;
+    devicePort->host_req_wg_id = 0;
+#endif
 
     if(contextList_.find(taskID) == contextList_.end()) {
         PCOUT_ERROR << "the context of ID "<< taskID << " not exists, check your input!" << endl;
@@ -108,7 +124,11 @@ int vt_device::start(int taskID, void* metaData){
     processor_.attach_ram(&contextList_.find(taskID)->second.ram);
     //each function call send one block of a kernel
     for (int i = 0; i < wgNum; ++i) {
+#ifndef DEBUG_MMU
         uint64_t kernelID = inputData->kernel_id;
+#else
+        uint64_t kernelID = 0;
+#endif
         devicePort->host_req_wg_id = (inst_len)(((
                     kernelID<<(int)ceil(log2(MAX_CONTEXT)) | taskID)
                     <<((int)ceil(log2(MAX_KERNEL)) | kernelID))
@@ -118,7 +138,7 @@ int vt_device::start(int taskID, void* metaData){
         //更新contextList_
         map<int, _state>firedBlk;
         firedBlk.emplace((int)(devicePort->host_req_wg_id), UNFINISH);
-        contextList_.find(taskID)->second.kernelList.emplace(inputData->kernel_id, kernel_info(firedBlk, UNFINISH));
+        contextList_.find(taskID)->second.kernelList.emplace(kernelID, kernel_info(firedBlk, UNFINISH));
 
     }
     return 0;
@@ -359,10 +379,14 @@ void addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size
                 curAddr = (*rootItem)->vaddr + (*rootItem)->size;
                 break;
             case READ_WRITE:
-                while ((*rootItem)->vaddr < RWDATA_BASE && (*rootItem)->succContextItem != nullptr) {
+                while ((*rootItem)->vaddr < RWDATA_BASE) {
+                    if((*rootItem)->succContextItem == nullptr) {
+                        curAddr = RWDATA_BASE;
+                        break;
+                    }
                     *rootItem = (*rootItem)->succContextItem;
+                    curAddr = (*rootItem)->vaddr + (*rootItem)->size;
                 }
-                curAddr = RWDATA_BASE;
                 break;
         }
         uint64_t newVaddr;

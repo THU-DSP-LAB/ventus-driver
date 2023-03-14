@@ -338,6 +338,9 @@ int main(int argc, char *argv[]) {
     RT_CHECK(run_memcopy_test(kernel_arg.src_addr, 0x0badf00d40ff40ff, num_blocks, default_taskID));
   }
 
+  void* metadata;
+
+    vt_start(device,metadata, 0);
 /*  if (1 == test || -1 == test) {
 //      vt_mem_free(device, 0, default_taskID);
       create_test_kernel_bin(default_taskID, 0x0badf00d40ff40ff);
