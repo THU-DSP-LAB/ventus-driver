@@ -42,11 +42,18 @@ int vt_device::delete_device_mem(int taskID){
 int vt_device::alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID) {
     if(size <= 0 || vaddr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
+#ifndef DEBUG_MMU
+    int ret0 = addrManager_.allocMemory(taskID, kernelID, vaddr, size, BUF_TYPE);
+    auto it = contextList_.find(taskID);
+    int ret1 = it->second.ram.allocateMemory(it->second.root, *vaddr, size);
+    return ret0 || !ret1;
+#else
     uint64_t  *addr;
     int ret0 = addrManager_.allocMemory(taskID, kernelID, addr, size, BUF_TYPE);
     auto it = contextList_.find(taskID);
-    vaddr = it->second.ram.allocateMemory(it->second.root, *addr, size);
-    return ret0 || !ret1;
+    *vaddr = it->second.ram.allocateMemory(it->second.root, *addr, size);
+    return ret0 || !*vaddr;
+#endif
 }
 
 
@@ -55,23 +62,36 @@ int vt_device::free_local_mem(uint64_t size, uint64_t *vaddr, uint64_t taskID, u
         return -1;
     int ret0 = addrManager_.releaseMemory(taskID, kernelID, vaddr, size);
     auto it = contextList_.find(taskID);
+#ifndef DEBUG_MMU
     int ret1 = it->second.ram.releaseMemory(it->second.root, *vaddr);
     return ret0 || ret1;
+#else
+    return ret0;
+#endif
 }
 
 int vt_device::upload(uint64_t dev_vaddr, void *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID){
     if(size <= 0 || src_addr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
     auto it = contextList_.find(taskID);
+#ifndef DEBUG_MMU
     return it->second.ram.writeDataVirtual(it->second.root, dev_vaddr, size, src_addr);
-    
+#else
+    return it->second.ram.writeDataPhysical(dev_vaddr, size, src_addr);
+#endif
+
+
 }
 
 int vt_device::download(uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID){
     if(size <= 0 || dst_addr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
     auto it = contextList_.find(taskID);
+#ifndef DEBUG_MMU
     return it->second.ram.readDataVirtual(it->second.root, dev_vaddr, size, dst_addr);
+#else
+    return it->second.ram.readDataPhysical(dev_vaddr, size, dst_addr);
+#endif
 }
 /**
  * @brief   发送任务，每个任务由多个block组成，每次调用start发送一个任务
