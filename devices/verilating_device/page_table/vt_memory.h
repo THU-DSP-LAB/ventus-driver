@@ -1,7 +1,7 @@
 #pragma once
 #include "page.h"
 
-class                                                                                              Memory{
+class Memory{
 public:
     // PhysicalMemory 提供用物理地址读写数据的方法 writeData() readData()
     PhysicalMemory *pmm;
