@@ -42,9 +42,10 @@ int vt_device::delete_device_mem(int taskID){
 int vt_device::alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID) {
     if(size <= 0 || vaddr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
-    int ret0 = addrManager_.allocMemory(taskID, kernelID, vaddr, size, BUF_TYPE);
+    uint64_t  *addr;
+    int ret0 = addrManager_.allocMemory(taskID, kernelID, addr, size, BUF_TYPE);
     auto it = contextList_.find(taskID);
-    int ret1 = it->second.ram.allocateMemory(it->second.root, *vaddr, size);
+    vaddr = it->second.ram.allocateMemory(it->second.root, *addr, size);
     return ret0 || !ret1;
 }
 

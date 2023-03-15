@@ -3,7 +3,7 @@
 #define MAX_BLOCK   8
 #define RAM_RANGE   (4096ull*1024ull*1024ull) ///< 物理地址空间，4G bytes
 
-#define NUM_THREAD          16
+#define NUM_THREAD          8
 #define MAX_BLOCK_PER_SM    32
 #define NUM_SM              2
 

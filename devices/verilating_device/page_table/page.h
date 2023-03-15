@@ -115,9 +115,9 @@ public:
         max_range = (range + SV39::PageSize - 1) / SV39::PageSize * SV39::PageSize;
         //max_addr = max_range - 1ull;
         blocks = new std::list<Block>;
-        blocks->push_back(Block(0, SV39::PageSize * 1, false));
+        blocks->push_back(Block(0, 0x20000000, false));// 链表头，0-4K 默认不可用，范围可修改
         current_block = blocks->begin();
-        blocks->push_back(Block(max_range, SV39::PageSize * 1, false));
+        blocks->push_back(Block(max_range, SV39::PageSize * 1, false)); // 链表尾，max_range是最大可用地址+1 （4K对齐）
     }
     PhysicalMemory(const PhysicalMemory& p) {
         if(p.blocks != nullptr) {
