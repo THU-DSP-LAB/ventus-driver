@@ -29,9 +29,7 @@ using namespace ventus;
 using namespace std;
 //These macro is defined as test
 
-enum _state{
-    UNFINISH, FINISH
-};
+enum _state{UNFINISH, FINISH};
 
 
 struct meta_data{
