@@ -112,17 +112,24 @@ int vt_device::start(int taskID, void* metaData){
     auto inputData = (meta_data *)metaData;
 #ifndef DEBUG_MMU
     uint64_t wgNum = inputData->kernel_size[0] * inputData->kernel_size[1]*inputData->kernel_size[2];
-    devicePort->host_req_gds_baseaddr = 128;
-    devicePort->host_req_gds_size_total = 0;
-    devicePort->host_req_lds_size_total = inputData->ldsSize * wgNum;
-    devicePort->host_req_num_wf = inputData->wg_size;
-    devicePort->host_req_sgpr_size_per_wf = inputData->sgprUsage;
-    devicePort->host_req_sgpr_size_total = inputData->sgprUsage;
-    devicePort->host_req_vgpr_size_total = inputData->vgprUsage;
-    devicePort->host_req_vgpr_size_per_wf = inputData->vgprUsage;
-    devicePort->host_req_start_pc = 0;
-    devicePort->host_req_wf_size = inputData->wf_size;
+    uint64_t pdsParam = inputData->pdsSize * inputData->wf_size * inputData->wg_size;
     devicePort->host_req_wg_id = 0;
+    devicePort->host_req_num_wf = inputData->wg_size;
+    devicePort->host_req_wf_size = inputData->wf_size;
+    devicePort->host_req_start_pc = 0;
+    devicePort->host_req_vgpr_size_total = inputData->wg_size * inputData->vgprUsage;
+    devicePort->host_req_sgpr_size_total = inputData->wg_size * inputData->sgprUsage;
+    devicePort->host_req_sgpr_size_per_wf = inputData->sgprUsage;
+    devicePort->host_req_vgpr_size_per_wf = inputData->vgprUsage;
+    devicePort->host_req_lds_size_total = inputData->ldsSize;
+    devicePort->host_req_gds_size_total = 0;
+    devicePort->host_req_gds_baseaddr = 0;
+    devicePort->host_req_pds_baseaddr = 0;
+    devicePort->host_req_csr_knl = inputData->metaDataBaseAddr;
+    devicePort->host_req_kernel_size_3d_0 = inputData->kernel_size[0];
+    devicePort->host_req_kernel_size_3d_1 = inputData->kernel_size[1];
+    devicePort->host_req_kernel_size_3d_2 = inputData->kernel_size[2];
+
 #else
     uint64_t wgNum = 4;
     devicePort->host_req_gds_baseaddr = 128;
@@ -136,6 +143,11 @@ int vt_device::start(int taskID, void* metaData){
     devicePort->host_req_start_pc = 0;
     devicePort->host_req_wf_size = 32;
     devicePort->host_req_wg_id = 0;
+    devicePort->host_req_csr_knl = 0;
+    devicePort->host_req_pds_baseaddr = 0;
+    devicePort->host_req_kernel_size_3d_0 = 0;
+    devicePort->host_req_kernel_size_3d_1 = 0;
+    devicePort->host_req_kernel_size_3d_2 = 0;
 #endif
 
     if(contextList_.find(taskID) == contextList_.end()) {
@@ -147,6 +159,7 @@ int vt_device::start(int taskID, void* metaData){
     for (int i = 0; i < wgNum; ++i) {
 #ifndef DEBUG_MMU
         uint64_t kernelID = inputData->kernel_id;
+        devicePort->host_req_pds_baseaddr = inputData->pdsBaseAddr + i * pdsParam;
 #else
         uint64_t kernelID = 0;
 #endif
@@ -277,7 +290,7 @@ queue<int> vt_device::get_finished_context() {
 
 ///@deprecated
 
-uint64_t vt_device::parse_metaData(uint64_t taskID, void *metaData, host_port_t* devicePort) {
+/*uint64_t vt_device::parse_metaData(uint64_t taskID, void *metaData, host_port_t* devicePort) {
     meta_data* inputData = (meta_data *)metaData;
     uint64_t wgNum = inputData->kernel_size[0] * inputData->kernel_size[1]*inputData->kernel_size[2];
     devicePort->host_req_gds_baseaddr = 128;
@@ -297,7 +310,7 @@ uint64_t vt_device::parse_metaData(uint64_t taskID, void *metaData, host_port_t*
         return -1;
     }
     return wgNum;
-}
+}*/
 
 
 addr_manager::~addr_manager() {

@@ -202,7 +202,7 @@ public:
 private:
 
     int push_kernel(uint64_t taskID, uint64_t kernelID, map<int, bool>input_blk_list);
-    uint64_t parse_metaData(uint64_t taskID, void *metaData, host_port_t* devicePort);
+//    uint64_t parse_metaData(uint64_t taskID, void *metaData, host_port_t* devicePort);
 
     Processor processor_;
     future<int> last_task_;

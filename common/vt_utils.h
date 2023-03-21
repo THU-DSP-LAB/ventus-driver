@@ -31,6 +31,12 @@ typedef struct {
     inst_len host_req_vgpr_size_per_wf;
     inst_len host_req_sgpr_size_per_wf;
     inst_len host_req_gds_baseaddr;
+    inst_len host_req_pds_baseaddr;
+    inst_len host_req_csr_knl;
+    inst_len host_req_kernel_size_3d_0;
+    inst_len host_req_kernel_size_3d_1;
+    inst_len host_req_kernel_size_3d_2;
+
 } host_port_t;///< GPGPU和主机之间进行配置参数传递的接口
 
 /**
