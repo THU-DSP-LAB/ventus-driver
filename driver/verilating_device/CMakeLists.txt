@@ -11,7 +11,8 @@ include_directories(${CMAKE_SOURCE_DIR}/devices/verilating_device/page_table)
 
 #set(CMAKE_POSITION_INDEPENDENT_CODE True)
 
-file(GLOB_RECURSE SRCS ./*)
+file(GLOB_RECURSE SRCS "./*.cpp" "./*.h")
+
 
 link_directories(${CMAKE_BINARY_DIR}/devices/verilating_device)
 

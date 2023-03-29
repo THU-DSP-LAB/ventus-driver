@@ -37,8 +37,8 @@
 ///@todo MMU，内存分配
 // #include <vt_malloc.h> 
 #include "vt_utils.h"
+#include "vt_config.h"
 
-//#include <VT_config.h>
 // devices/page_table
 #include "verilating_device/page_table/vt_memory.h"
 #include "verilating_device/page_table/MemConfig.h"

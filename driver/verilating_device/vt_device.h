@@ -1,7 +1,7 @@
 /**
  * @file vt_device.h
  * @brief 与驱动提供的API对接的类的声明
- * @author YangZexia (yang-zx17@qq.com)
+ * @author YangZexia (yang-zx17\@qq.com)
  * @version 1.2
  * @date 2022-11-24
  * 

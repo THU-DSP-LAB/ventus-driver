@@ -5,10 +5,11 @@
 #include <ventus.h>
 #include <chrono>
 
-#include "processor.h"
+//#include "processor.h"
 #include "MemConfig.h"
+#include "vt_config.h"
 
-using namespace ventus;
+//using namespace ventus;
 
 #define RT_CHECK(_expr)                                         \
    do {                                                         \
