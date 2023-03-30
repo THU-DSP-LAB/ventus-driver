@@ -22,7 +22,6 @@
 #include <stdio.h>
 #include <queue>
 
-#include "vt_utils.h"
 //#ifdef __cplusplus
 //extern "C" {
 //#endif
