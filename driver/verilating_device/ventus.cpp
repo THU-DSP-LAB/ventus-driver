@@ -66,12 +66,29 @@ extern int vt_dev_close(vt_device_h hdevice){
     delete device;
     return 0;
 }
-extern int vt_dev_caps(vt_device_h* hdevice, host_port_t* input_sig){
-    // if(hdevice == nullptr)
-    //     return -1;
-    // vt_device* device = (vt_device*) hdevice;
+extern int vt_dev_caps(vt_device_h* hdevice,  uint64_t caps_id, uint64_t *value){
+     if(hdevice == nullptr)
+         return -1;
+    switch (caps_id) {
+        case VT_CAPS_VERSION:
+            *value = IMPLEMENTATION_ID;
+            break;
+        case VT_CAPS_MAX_CORES:
+            *value = NUM_CTA;
+            break;
+        case VT_CAPS_MAX_WARPS:
+            *value = NUM_WARP;
+            break;
+        case VT_CAPS_MAX_THREADS:
+            *value = NUM_THREAD;
+            break;
+        default:
+            std::cout << "invalid caps id: " << caps_id << std::endl;
+            std::abort();
+            return -1;
+    }
 
-    return -1;
+    return 0;
 }
 extern int vt_buf_alloc(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID) {
     if(size <= 0 || hdevice == nullptr)

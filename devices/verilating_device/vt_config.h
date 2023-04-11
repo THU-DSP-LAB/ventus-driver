@@ -28,3 +28,8 @@
 
 #define DEBUG_MMU
 
+//device info
+#define IMPLEMENTATION_ID 0
+#define NUM_CTA           2
+#define NUM_WARP          4
+#define THREAD_PER_WARP   8

@@ -30,6 +30,15 @@ typedef void* vt_device_h; ///< 类型定义，指向vt_device类的指针
 
 typedef void* vt_buffer_h; ///< 类型定义，指向vt_buffer类的指针
 
+// device caps ids
+#define VT_CAPS_VERSION           0x0
+#define VT_CAPS_MAX_CORES         0x1
+#define VT_CAPS_MAX_WARPS         0x2
+#define VT_CAPS_MAX_THREADS       0x3
+#define VT_CAPS_CACHE_LINE_SIZE   0x4
+#define VT_CAPS_LOCAL_MEM_SIZE    0x5
+#define VT_CAPS_ALLOC_BASE_ADDR   0x6
+#define VT_CAPS_KERNEL_BASE_ADDR  0x7
 
 #define MAX_TIMEOUT               (60*60*1000)   // 1hr 
 
@@ -45,7 +54,7 @@ int vt_dev_open(vt_device_h* hdevice);
 int vt_dev_close(vt_device_h hdevice);
 
 /// return device configurations
-// int vt_dev_caps(vt_device_h* hdevice, uint32_t caps_id, uint64_t *value);
+ int vt_dev_caps(vt_device_h* hdevice, uint64_t caps_id, uint64_t *value);
 
 /// @brief 【已实现】以任务为单位，在GPGPU设备上分配虚拟内存空间（创建根页表）
 /// @param hdevice 指向设备的指针
