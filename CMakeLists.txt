@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 set(PROJECT ventus_driver)
 project(${PROJECT})
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 # set(CMAKE_CXX_FLAGS -Wl,--whole-archive -Wl,--no-whole-archive)
 
 include_directories(common)
@@ -35,6 +35,11 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/test.cpp")
     set(CODING_TEST test)
     add_executable(${CODING_TEST} test.cpp)
 endif()
+
+option(ENABLE_INSTALL "if install driver library to install dir" OFF)
+
+set(DRIVER_LIB_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/lib/ventus-driver)
+message(STATUS "DRIVER_LIB_INSTALL_DIR:" ${DRIVER_LIB_INSTALL_DIR})
 
 add_subdirectory(devices)
 add_subdirectory(driver)

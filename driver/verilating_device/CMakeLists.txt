@@ -25,4 +25,6 @@ target_link_libraries(${PROJECT} PUBLIC rtlsim)
 set_target_properties(${PROJECT} PROPERTIES OUTPUT_NAME "${PROJECT}")
 set_target_properties(${PROJECT} PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 
-
+if(ENABLE_INSTALL)
+    install(TARGETS ${PROJECT} LIBRARY DESTINATION ${DRIVER_LIB_INSTALL_DIR} COMPONENT "lib")
+endif()

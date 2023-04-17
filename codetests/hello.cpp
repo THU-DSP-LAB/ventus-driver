@@ -3,6 +3,8 @@
 #include <queue>
 #include <cstdlib>
 
+//#include "ventus.h"
+
 
 #include "testlib.h"
 
@@ -39,7 +41,8 @@ int search_binary(vector<int>v, int value)
 
 int main()
 {
-
+//    vt_device_h test;
+//    vt_dev_open(&test);
     int* p = new int[10];
     void* p1 = p;
     for (int i = 0; i < 10; ++i) {

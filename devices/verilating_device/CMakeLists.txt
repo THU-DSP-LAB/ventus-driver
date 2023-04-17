@@ -3,7 +3,6 @@ set(PROJECT rtlsim)
 set(PROJECT2 rtllib)
 PROJECT(${PROJECT})
 
-set(CMAKE_CXX_STANDARD 11)
 
 #MMUtest or GPGPU_top
 set(TOP MMUtest)
