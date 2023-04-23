@@ -48,10 +48,11 @@ int vt_device::alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uin
     int ret1 = it->second.ram.allocateMemory(it->second.root, *vaddr, size);
     return ret0 || !ret1;
 #else
-    uint64_t  *addr;
+    uint64_t  *addr = new uint64_t;
     int ret0 = addrManager_.allocMemory(taskID, kernelID, addr, size, BUF_TYPE);
     auto it = contextList_.find(taskID);
     *vaddr = it->second.ram.allocateMemory(it->second.root, *addr, size);
+    delete addr;
     return ret0 || !*vaddr;
 #endif
 }
@@ -70,7 +71,7 @@ int vt_device::free_local_mem(uint64_t size, uint64_t *vaddr, uint64_t taskID, u
 #endif
 }
 
-int vt_device::upload(uint64_t dev_vaddr, void *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID){
+int vt_device::upload(uint64_t dev_vaddr,const void *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID){
     if(size <= 0 || src_addr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
     auto it = contextList_.find(taskID);
@@ -388,7 +389,8 @@ int addr_manager::createNewContext(uint64_t contextID) {
         }
     }
 //    contextList_.emplace_back(contextID);
-    contextMemory_.emplace(contextID, nullptr);
+    auto t = contextMemory_.emplace(contextID, nullptr);
+    auto p = t.first;
     return 0;
 }
 

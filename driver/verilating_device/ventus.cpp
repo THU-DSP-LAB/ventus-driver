@@ -139,7 +139,7 @@ extern int vt_root_mem_free(vt_device_h hdevice, int taskID) {
 //    return device->push_kernel(taskID, kernelID);
 //}
 
-extern int vt_copy_to_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID) {
+extern int vt_copy_to_dev(vt_device_h hdevice, uint64_t dev_vaddr,const void *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID) {
     if(size <= 0)
         return -1;
     auto device = (vt_device*) hdevice;

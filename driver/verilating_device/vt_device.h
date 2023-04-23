@@ -141,8 +141,7 @@ private:
 
 class vt_device {
 public:
-    vt_device()
-        {
+    vt_device() {
 //            addrManager_.attatch_ram(&ram_);
             test_proc();
             // list<unordered_map<int, bool>> task_by_block_l;
@@ -181,7 +180,7 @@ public:
      * @param  size              大小
      * @return int 
      */
-    int upload(uint64_t dev_vaddr, void *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
+    int upload(uint64_t dev_vaddr,const void *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID);
     /**
      * @brief 
      * @param  root              根页表
