@@ -121,7 +121,7 @@ public:
     bool findKernelID(uint64_t kernelID);
 private:
 
-    void findVaddr(addrItem** rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE);
+    int findVaddr(addrItem** rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE);
     /**
      * 插入一个addrItem到currentItem的后面
      * @param currentItem

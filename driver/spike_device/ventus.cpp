@@ -48,7 +48,7 @@ extern int vt_buf_alloc(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int
     return device->alloc_local_mem(size, vaddr);
 
 }
-extern int vt_buf_free(vt_buffer_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID) {
+extern int vt_buf_free(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID) {
     if(hdevice == nullptr)
         return -1;
     auto device = ((spike_device*) hdevice);

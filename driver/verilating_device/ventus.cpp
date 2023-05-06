@@ -6,7 +6,7 @@
  * 2. `vt_device`类，表示GPGPU设备，成员变量包括设备类（不包含ram），设备ram类
  * 3. `vt_buffer`类，主机和设备之间交换数据的缓冲，成员变量包括`vt_device`，数据，缓冲区大小
 
- * @author yangzexia (yang-zx17@qq.com)
+ * @author yangzexia (yang-zx17\@qq.com)
  * @version 1.0
  * @date 2022-11-16
  * 
@@ -56,6 +56,7 @@ extern int vt_dev_open(vt_device_h* hdevice){
         return -1;
     PCOUT_INFO << "vt_dev_open : hello world from ventus.cpp" << endl;
     *hdevice = new vt_device();
+	vt_root_mem_alloc(*hdevice, 0);
     return 0;
 }
 /// Close the device when all the operations are done
@@ -97,7 +98,7 @@ extern int vt_buf_alloc(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int
     return device->alloc_local_mem( size, vaddr, BUF_TYPE, taskID, kernelID);
 
 }
-extern int vt_buf_free(vt_buffer_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID) {
+extern int vt_buf_free(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID) {
     if(size <= 0 || hdevice == nullptr)
         return -1;
     auto device = ((vt_device*) hdevice);
@@ -175,7 +176,6 @@ extern int vt_finish_all_kernel(vt_device_h hdevice, queue<int> *finished_kernel
     return 0;
 }
 
-/*
 extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t size, int taskID) {
   int err = 0;
 
@@ -189,41 +189,40 @@ extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint6
 //     return -1;
 
   // allocate device buffer
-  vt_buffer_h buffer;
-  err = vt_buf_alloc(device, buffer_transfer_size, &buffer);
-  if (err != 0)
-    return -1;
-
+  uint64_t dev_mem_addr;
   // get buffer address
-  auto buf_ptr = (uint8_t*)vt_host_ptr(buffer);
+//  auto buf_ptr = (uint8_t*)vt_host_ptr(buffer);
 
   //
   // upload content
   //
 
   uint64_t offset = 0;
+  void * const buffer = malloc(buffer_transfer_size);
   while (offset < size) {
     auto chunk_size = std::min<uint64_t>(buffer_transfer_size, size - offset);
-    std::memcpy(buf_ptr, (uint8_t*)content + offset, chunk_size);
+    std::memcpy(buffer, (uint8_t*)content + offset, chunk_size);
 
-    */
-/*printf("***  Upload Kernel to 0x%0x: data=", kernel_base_addr + offset);
+	err = vt_buf_alloc(device, buffer_transfer_size, &dev_mem_addr, READ_ONLY, taskID, 0);
+	if (err != 0)
+	  return -1;
+
+	printf("***  Upload Kernel to 0x%0x: data=", kernel_base_addr + offset);
     for (int i = 0, n = ((chunk_size+7)/8); i < n; ++i) {
       printf("%08x", ((uint64_t*)((uint8_t*)content + offset))[n-1-i]);
     }
-    printf("\n");*//*
+    printf("\n");
 
 
-
-    err = vt_copy_to_dev(buffer, kernel_base_addr + offset, chunk_size, taskID);
+    err = vt_copy_to_dev(device, dev_mem_addr, buffer, chunk_size, taskID, 0);
     if (err != 0) {
-      vt_buf_free(buffer);
+      vt_buf_free(device, buffer_transfer_size, &dev_mem_addr, taskID, 0);
       return err;
     }
     offset += chunk_size;
   }
 
-  vt_buf_free(buffer);
+//  vt_buf_free(buffer);
 
   return 0;
 }
@@ -250,4 +249,3 @@ extern int vt_upload_kernel_file(vt_device_h device, const char* filename, int t
 
   return err;
 }
-*/

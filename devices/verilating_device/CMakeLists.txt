@@ -58,3 +58,7 @@ verilate(${PROJECT2}
         VERILATOR_ARGS  ${VL_FLAGS}
         )
 
+if(ENABLE_INSTALL)
+    install(TARGETS ${PROJECT} LIBRARY DESTINATION ${DRIVER_LIB_INSTALL_DIR} COMPONENT "lib")
+endif()
+

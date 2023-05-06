@@ -318,7 +318,7 @@ int main(int argc, char *argv[]) {
   // allocate device memory
 //  RT_CHECK(vt_mem_alloc(device, buf_size, &kernel_arg.src_addr, default_taskID));
   // kernel_arg.src_addr = value;
-  RT_CHECK(vt_root_mem_alloc(device, default_taskID));
+//  RT_CHECK(vt_root_mem_alloc(device, default_taskID));
   // kernel_arg.dst_addr = value;
 
   kernel_arg.count = num_points;

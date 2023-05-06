@@ -61,13 +61,13 @@ int vt_device::alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uin
 int vt_device::free_local_mem(uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID){
     if(size <= 0 || vaddr == nullptr || !addrManager_.findContextID(taskID))
         return -1;
-    int ret0 = addrManager_.releaseMemory(taskID, kernelID, vaddr, size);
     auto it = contextList_.find(taskID);
-#ifndef DEBUG_MMU
     int ret1 = it->second.ram.releaseMemory(it->second.root, *vaddr);
+#ifndef DEBUG_MMU
+    int ret0 = addrManager_.releaseMemory(taskID, kernelID, vaddr, size);
     return ret0 || ret1;
 #else
-    return ret0;
+    return ret1;
 #endif
 }
 
@@ -289,29 +289,7 @@ queue<int> vt_device::get_finished_context() {
     return tmp;
 }
 
-///@deprecated
 
-/*uint64_t vt_device::parse_metaData(uint64_t taskID, void *metaData, host_port_t* devicePort) {
-    meta_data* inputData = (meta_data *)metaData;
-    uint64_t wgNum = inputData->kernel_size[0] * inputData->kernel_size[1]*inputData->kernel_size[2];
-    devicePort->host_req_gds_baseaddr = 128;
-    devicePort->host_req_gds_size_total = 0;
-    devicePort->host_req_lds_size_total = inputData->ldsSize * wgNum;
-    devicePort->host_req_num_wf = inputData->wg_size;
-    devicePort->host_req_sgpr_size_per_wf = inputData->sgprUsage;
-    devicePort->host_req_sgpr_size_total = inputData->sgprUsage;
-    devicePort->host_req_vgpr_size_total = inputData->vgprUsage;
-    devicePort->host_req_vgpr_size_per_wf = inputData->vgprUsage;
-    devicePort->host_req_start_pc = 0;
-    devicePort->host_req_wf_size = inputData->wf_size;
-    devicePort->host_req_wg_id = 0;
-
-    if(contextList_.find(taskID) == contextList_.end()) {
-        PCOUT_ERROR << "the context of ID "<< taskID << " not exists, check your input!" << endl;
-        return -1;
-    }
-    return wgNum;
-}*/
 
 
 addr_manager::~addr_manager() {
@@ -366,8 +344,11 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
             }
             else {
                 currentItem = contextMemory_.at(contextID);
-                findVaddr(&currentItem, vaddr, size, BUF_TYPE);
-                insertNewItem(currentItem, contextID, kernelID, vaddr, size);
+                if(!findVaddr(&currentItem, vaddr, size, BUF_TYPE))
+                	insertNewItem(currentItem, contextID, kernelID, vaddr, size);
+				else {
+					PCOUT_ERROR << "allocating virtual addr failed !" << endl;
+				}
             }
 //            break;
 //        }
@@ -405,7 +386,7 @@ void addr_manager::insertNewItem(addrItem *currentItem, uint64_t contextID, uint
 
 }
 
-void addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE) {
+int addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE) {
 
     while((*rootItem) != nullptr) {
 
@@ -415,6 +396,7 @@ void addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size
                 curAddr = (*rootItem)->vaddr + (*rootItem)->size;
                 break;
             case READ_WRITE:
+				curAddr = (*rootItem)->vaddr + (*rootItem)->size;
                 while ((*rootItem)->vaddr < RWDATA_BASE) {
                     if((*rootItem)->succContextItem == nullptr) {
                         curAddr = RWDATA_BASE;
@@ -442,25 +424,26 @@ void addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size
                         *vaddr = newVaddr;
                         break;
                     } else {
-                        PCOUT_ERROR << "vaddr range" << *vaddr <<" not match with BUF_TYPE of READ_ONLY!" << endl;
-                        break;
+                        PCOUT_ERROR << "vaddr range0x" <<hex<< *vaddr<<dec<<" not match with BUF_TYPE of READ_ONLY!" << endl;
+                        return -1;
                     }
                 case READ_WRITE: if((newVaddr >= RWDATA_BASE)) {
                         *vaddr = newVaddr;
                         break;
                     } else {
-                        PCOUT_ERROR << "vaddr range" << *vaddr <<" not match with BUF_TYPE of READ_WRITE!" << endl;
-                        break;
+                        PCOUT_ERROR << "vaddr range0x" <<hex<< *vaddr<<dec<<" not match with BUF_TYPE of READ_WRITE!" << endl;
+						return -1;
                     }
                 default: {
                     PCOUT_ERROR << "unknown BUF_TYPE!" << BUF_TYPE<<" check your input!" <<endl;
-                    break;
+					return -1;
                 }
             }
             //跳出while循环
             break;
 
     }
+	return 0;
 }
 
 int addr_manager::releaseMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size) {

@@ -8,8 +8,8 @@
 #define DEBUG
 
 #ifdef DEBUG
-#define PCOUT_ERROR std::cout<<"[ERROR]: "<<__FUNCTION__<<": "
-#define PCOUT_INFO std::cout<<"[INFO]: "<<__FUNCTION__<<": "
+#define PCOUT_ERROR std::cout<<"[ERROR]: [HW DRIVER] in fn "<<__FUNCTION__<<": "
+#define PCOUT_INFO std::cout<<"[INFO]: [HW DRIVER] in fn "<<__FUNCTION__<<": "
 #endif
 
 #define INSTSIZE64
