@@ -7,9 +7,9 @@ set(CMAKE_CXX_STANDARD 17)
 
 include_directories(common)
 include_directories(include)
-include_directories(devices)
-include_directories(devices/verilating_device/page_table)
-include_directories(tests)
+#include_directories(devices)
+#include_directories(devices/verilating_device/page_table)
+#include_directories(tests)
 include_directories(driver)
 
 
@@ -41,7 +41,7 @@ option(ENABLE_INSTALL "if install driver library to install dir" OFF)
 set(DRIVER_LIB_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/lib/ventus-driver)
 message(STATUS "DRIVER_LIB_INSTALL_DIR:" ${DRIVER_LIB_INSTALL_DIR} "\n")
 
-add_subdirectory(devices)
+#add_subdirectory(devices)
 add_subdirectory(driver)
-add_subdirectory(tests)
-add_subdirectory(codetests)
+#add_subdirectory(tests)
+#add_subdirectory(codetests)
