@@ -87,6 +87,7 @@ struct addrItem{
     uint64_t kernelID;
     uint64_t taskID;
     uint64_t vaddr;
+	uint64_t paddr;
     uint64_t size;
     addrItem(uint64_t in_kernelID,uint64_t in_taskID,uint64_t in_vaddr,uint64_t in_size)
             :prevContextItem(nullptr),
@@ -98,6 +99,9 @@ struct addrItem{
              vaddr(in_vaddr),
              size(in_size)
     {}
+	addrItem& operator[](uint64_t vaddr) {
+
+	}
 };
 
 /**
@@ -116,12 +120,13 @@ public:
     int createNewContext(uint64_t contextID);
     int allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size, int BUF_TYPE);
     int releaseMemory(uint64_t contextID, uint64_t kernelID, uint64_t *vaddr, uint64_t size);
-
-    bool findContextID(uint64_t contextID);
+	int attachPaddr(uint64_t kernelID, uint64_t contextID, uint64_t *vaddr, uint64_t *paddr);
+	int findVaByPa(uint64_t kernelID, uint64_t contextID, uint64_t *vaddr, uint64_t *paddr);
+	bool findContextID(uint64_t contextID);
     bool findKernelID(uint64_t kernelID);
 private:
 
-    int findVaddr(addrItem** rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE);
+    int allocVaddr(addrItem** rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE);
     /**
      * 插入一个addrItem到currentItem的后面
      * @param currentItem

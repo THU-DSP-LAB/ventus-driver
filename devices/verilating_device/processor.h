@@ -26,7 +26,7 @@
 #include "vt_utils.h"
 
 #include "controller.cpp"
-#include "VMMUtest.h"
+#include "VGPGPU_top.h"
 
 
 namespace ventus {
@@ -70,7 +70,7 @@ private:
         VVentus *device_; ///< GPGPU
 #endif
 #ifdef DEBUG_MMU
-        VMMUtest *device_;
+		VGPGPU_top *device_;
 #endif
         Memory *ram_; ///< GPGPU的ram
 

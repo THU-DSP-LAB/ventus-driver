@@ -159,11 +159,13 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
   elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start).count();  
   printf("Total elapsed time: %lg ms\n", elapsed);
 
-    {
-        std::cout << "verify result" << std::endl;
-        uint64_t *test_addr;
+
+        uint64_t *test_addr = new uint64_t;
         RT_CHECK(vt_buf_alloc(device, buf_size, test_addr, READ_WRITE, default_taskID, default_kernelID));
         RT_CHECK(vt_copy_to_dev(device, *test_addr, src_addr, buf_size, default_taskID, default_kernelID));
+		for (int i = 0; i < num_blocks_8; ++i) {
+			((uint64_t*)dst_addr)[i] = 0;
+		}
         RT_CHECK(vt_copy_from_dev(device, *test_addr, dst_addr, buf_size, default_taskID, default_kernelID));
         std::cout << "verify result" << std::endl;
         for (int i = 0; i < num_blocks_8; ++i) {
@@ -177,9 +179,11 @@ int run_memcopy_test(uint32_t dev_addr, uint64_t value, int num_blocks, int task
         }
         vt_buf_free(device, buf_size, test_addr, default_taskID, default_kernelID);
 
-    }
+		delete test_addr;
 
   vt_buf_free(device, buf_size, buf_addr, default_taskID, default_kernelID);
+
+  delete buf_addr;
 
   return 0;
 }

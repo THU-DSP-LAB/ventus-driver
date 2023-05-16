@@ -5,7 +5,7 @@ PROJECT(${PROJECT})
 
 
 #MMUtest or GPGPU_top
-set(TOP MMUtest)
+set(TOP GPGPU_top)
 set(RTL_DIR ${CMAKE_SOURCE_DIR}/rtl)
 
 include_directories(${CMAKE_SOURCE_DIR}/common)
@@ -59,6 +59,6 @@ verilate(${PROJECT2}
         )
 
 if(ENABLE_INSTALL)
-    install(TARGETS ${PROJECT} LIBRARY DESTINATION ${DRIVER_LIB_INSTALL_DIR} COMPONENT "lib")
+    install(TARGETS ${PROJECT} ${PROJECT2}  LIBRARY DESTINATION ${DRIVER_LIB_INSTALL_DIR} COMPONENT "lib")
 endif()
 

@@ -38,7 +38,7 @@ endif()
 
 option(ENABLE_INSTALL "if install driver library to install dir" OFF)
 
-set(DRIVER_LIB_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/lib/ventus-driver)
+set(DRIVER_LIB_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/lib/)
 message(STATUS "DRIVER_LIB_INSTALL_DIR:" ${DRIVER_LIB_INSTALL_DIR} "\n")
 
 add_subdirectory(devices)

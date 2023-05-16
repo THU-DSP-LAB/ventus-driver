@@ -9,34 +9,30 @@ struct TLBundleA{ // req
     uint32_t source;
     uint64_t address;
     uint32_t mask;
-    uint64_t *data;
     uint8_t ready; // controller -> gpu, output
     uint8_t valid; // gpu -> controller, input
-//    TLBundleA(){
-//        PCOUT_INFO << "TLBundleA construct variable data : Before" << std::endl;
-//        data = new uint64_t;
-//        PCOUT_INFO << "TLBundleA construct variable data : After" << std::endl;
-//    }
-//    ~TLBundleA(){
-//        delete data;
-//    }
+    uint64_t *data;
+    TLBundleA(int n){
+        data = new uint64_t[n];
+    }
+    ~TLBundleA(){
+        delete [] data;
+    }
 };
 
 struct TLBundleD{ // rsp
     uint8_t opcode;
     uint32_t size;
     uint32_t source;
-    uint64_t *data;
     uint8_t ready; // gpu -> controller, input
     uint8_t valid; // controller -> gpu, output
-//    TLBundleD(){
-//        PCOUT_INFO << "TLBundleD construct variable data : Before" << std::endl;
-//        data = new uint64_t ;
-//        PCOUT_INFO << "TLBundleD construct variable data : After" << std::endl;
-//    }
-//    ~TLBundleD(){
-//        delete data;
-//    }
+    uint64_t *data;
+    TLBundleD(int n){
+        data = new uint64_t[n];
+    }
+    ~TLBundleD(){
+        delete [] data;
+    }
 };
 
 class Controller{
@@ -46,14 +42,12 @@ public:
     uint64_t *data;
     int default_delay = 3;
     Controller(uint32_t num_thread){
-        req = new TLBundleA();
-        rsp = new TLBundleD();
+        req = new TLBundleA(2);
+        rsp = new TLBundleD(2);
         num_ = num_thread;
         data = new uint64_t[num_thread];
     }
     ~Controller(){
-        req->data = nullptr;
-        rsp->data = nullptr;
         delete req;
         delete rsp;
         delete [] data;

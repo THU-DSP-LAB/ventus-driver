@@ -48,10 +48,18 @@ int vt_device::alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uin
     int ret1 = it->second.ram.allocateMemory(it->second.root, *vaddr, size);
     return ret0 || !ret1;
 #else
+	/// 这里addrManager会分配一个虚拟地址addr,ram根据这个虚拟地址分配一个物理地址vaddr，
+	/// 这个物理地址作为buf_alloc的返回值
+
     uint64_t  *addr = new uint64_t;
     int ret0 = addrManager_.allocMemory(taskID, kernelID, addr, size, BUF_TYPE);
     auto it = contextList_.find(taskID);
     *vaddr = it->second.ram.allocateMemory(it->second.root, *addr, size);
+	/// 将ram分配的物理地址和addrManager分配的物理地址关联起来
+	addrManager_.attachPaddr(taskID, kernelID, addr, vaddr);
+//	cout << dec << *vaddr << endl;
+//	cout << "allocating memory at vaddr of 0x" <<hex << *addr <<dec<< ", associated paddr of 0x" << *vaddr  << endl;
+
     delete addr;
     return ret0 || !*vaddr;
 #endif
@@ -62,7 +70,10 @@ int vt_device::free_local_mem(uint64_t size, uint64_t *vaddr, uint64_t taskID, u
     if(size <= 0 || vaddr == nullptr || !addrManager_.findContextID(taskID))
         return -1;
     auto it = contextList_.find(taskID);
-    int ret1 = it->second.ram.releaseMemory(it->second.root, *vaddr);
+	uint64_t *paddr = new uint64_t;
+	addrManager_.findVaByPa(kernelID,taskID,paddr,vaddr);
+    int ret1 = it->second.ram.releaseMemory(it->second.root, *paddr);
+	delete paddr;
 #ifndef DEBUG_MMU
     int ret0 = addrManager_.releaseMemory(taskID, kernelID, vaddr, size);
     return ret0 || ret1;
@@ -344,7 +355,7 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
             }
             else {
                 currentItem = contextMemory_.at(contextID);
-                if(!findVaddr(&currentItem, vaddr, size, BUF_TYPE))
+                if(!allocVaddr(&currentItem, vaddr, size, BUF_TYPE))
                 	insertNewItem(currentItem, contextID, kernelID, vaddr, size);
 				else {
 					PCOUT_ERROR << "allocating virtual addr failed !" << endl;
@@ -386,7 +397,7 @@ void addr_manager::insertNewItem(addrItem *currentItem, uint64_t contextID, uint
 
 }
 
-int addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE) {
+int addr_manager::allocVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE) {
 
     while((*rootItem) != nullptr) {
 
@@ -443,6 +454,47 @@ int addr_manager::findVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size,
             break;
 
     }
+	return 0;
+}
+
+
+int addr_manager::attachPaddr(uint64_t kernelID, uint64_t contextID, uint64_t *vaddr, uint64_t *paddr) {
+	bool b_contextExist = false;
+	bool b_vaddrExist = false;
+//    for(auto it : contextList_) {
+//        if(it == contextID) {
+	b_contextExist = true;
+	auto tmp = contextMemory_.at(contextID);
+	while(tmp != nullptr) {
+		if(tmp->vaddr == *vaddr) {
+			tmp->paddr = *paddr;
+			break;
+		}
+		tmp = tmp->succContextItem;
+//            }
+//            break;
+//        }
+	}
+	if(!tmp) {
+		PCOUT_ERROR << "Attaching paddr created by ram and vaddr created by addrManager_ failed, vaddr not exists!" << endl;
+		return -1;
+	}
+	return 0;
+}
+
+int addr_manager::findVaByPa(uint64_t kernelID, uint64_t contextID, uint64_t *vaddr, uint64_t *paddr) {
+	if(contextMemory_.find(contextID) == contextMemory_.end()) {
+		PCOUT_ERROR << "Context of ID" << contextID <<" has not created,check parameters!" << endl;
+		return -1;
+	}
+	auto tmp = contextMemory_.at(contextID);
+	while(tmp != nullptr) {
+		if(tmp->paddr == *paddr) {
+			*vaddr = tmp->vaddr;
+			break;
+		}
+		tmp = tmp->succContextItem;
+	}
 	return 0;
 }
 

@@ -219,6 +219,7 @@ public:
                     printf("No pages in this block: 0x%016lx\n", addr);
                     return -1;
                 }
+				//如果要读取的地址和block的基地址不同，则对齐
                 iter.read(addr - iter.addr, length, data);
                 return 0;
             }
@@ -238,6 +239,7 @@ public:
 
     template<class T> int readWords(uint64_t addr, uint64_t num, T *data, const void *mask = nullptr){
         readData(addr, num * sizeof(T), data);
+		//根据mask将对应的数据置零
         if(mask != nullptr){
             for(uint64_t i = 0; i < num; i++){
                 uint8_t maskbit = (((uint8_t *)mask)[i/8] >> (i%8)) & '\x01';

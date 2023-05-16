@@ -24,10 +24,10 @@
 
 #include <verilated.h>
 #ifdef  DEBUG_GPGPU
-    #include "VVentus.h"
+    #include "VGPGPU_top.h"
 #endif
 #ifdef DEBUG_MMU
-    #include "VMMUtest.h"
+    #include "VGPGPU_top.h"
 #endif
 
 
@@ -56,7 +56,7 @@ Processor::Impl::Impl():mem_ctrl(NUM_THREAD) {
             device_ = new VVentus();
         #endif
         #ifdef DEBUG_MMU
-            device_ = new VMMUtest();
+            device_ = new VGPGPU_top();
         #endif
 
         ram_ = nullptr;
@@ -160,7 +160,9 @@ void Processor::Impl::get_ram_bits_port() {
         mem_ctrl.req->mask = device_->io_out_a_bits_mask;
         if(mem_ctrl.req->data == nullptr)
             mem_ctrl.req->data = new uint64_t;
-        *(mem_ctrl.req->data) = device_->io_out_a_bits_data;
+		for (int i = 0; i < NUM_THREAD/2; ++i) {
+			mem_ctrl.req->data[i] = device_->io_out_a_bits_data[i];
+		}
         mem_ctrl.req->valid = device_->io_out_a_valid;
         device_->io_out_a_ready = mem_ctrl.req->ready;
 
@@ -170,7 +172,9 @@ void Processor::Impl::get_ram_bits_port() {
         if(mem_ctrl.rsp->data == nullptr) {
             mem_ctrl.rsp->data = new uint64_t;
         }
-        device_->io_out_d_bits_data = *(mem_ctrl.rsp->data);
+	for (int i = 0; i < NUM_THREAD/2; ++i) {
+        device_->io_out_d_bits_data[i] = mem_ctrl.rsp->data[i];
+	}
         device_->io_out_d_valid = mem_ctrl.rsp->valid;
         mem_ctrl.rsp->ready = device_->io_out_d_ready;
     }

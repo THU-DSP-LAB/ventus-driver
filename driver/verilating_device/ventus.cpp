@@ -102,6 +102,7 @@ extern int vt_buf_free(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint
     if(size <= 0 || hdevice == nullptr)
         return -1;
     auto device = ((vt_device*) hdevice);
+
     return device->free_local_mem( size, vaddr, taskID, kernelID);
 
 }
