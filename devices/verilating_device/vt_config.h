@@ -26,7 +26,7 @@
 #define   HOST_REQ_SGPR_SIZE_PER_WF         0x28
 #define   HOST_REQ_GDS_BASEADDR             0x32
 
-#define DEBUG_MMU
+#define DEBUG_VIRTUAL_ADDR
 
 //device info
 #define IMPLEMENTATION_ID 0

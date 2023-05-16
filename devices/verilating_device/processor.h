@@ -69,7 +69,7 @@ private:
 #ifdef DEBUG_GPGPU
         VVentus *device_; ///< GPGPU
 #endif
-#ifdef DEBUG_MMU
+#ifdef DEBUG_VIRTUAL_ADDR
 		VGPGPU_top *device_;
 #endif
         Memory *ram_; ///< GPGPU的ram

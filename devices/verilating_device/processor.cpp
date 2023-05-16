@@ -26,7 +26,7 @@
 #ifdef  DEBUG_GPGPU
     #include "VGPGPU_top.h"
 #endif
-#ifdef DEBUG_MMU
+#ifdef DEBUG_VIRTUAL_ADDR
     #include "VGPGPU_top.h"
 #endif
 
@@ -55,7 +55,7 @@ Processor::Impl::Impl():mem_ctrl(NUM_THREAD) {
         #ifdef DEBUG_GPGPU
             device_ = new VVentus();
         #endif
-        #ifdef DEBUG_MMU
+        #ifdef DEBUG_VIRTUAL_ADDR
             device_ = new VGPGPU_top();
         #endif
 
