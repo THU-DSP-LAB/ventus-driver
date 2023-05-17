@@ -23,7 +23,7 @@ file(GLOB_RECURSE SRCS ./ventus.cpp)
 #message($ENV{SPIKE_TARGET_DIR})
 
 add_library(${PROJECT} SHARED ${SRCS})
-target_link_directories(${PROJECT} PUBLIC $ENV{SPIKE_TARGET_DIR})
+target_link_directories(${PROJECT} PUBLIC $ENV{SPIKE_TARGET_DIR}/lib)
 target_link_libraries(${PROJECT} PUBLIC spike_main)
 
 set_target_properties(${PROJECT} PROPERTIES OUTPUT_NAME "${PROJECT}")
