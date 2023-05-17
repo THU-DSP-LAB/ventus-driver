@@ -47,7 +47,8 @@ int vt_device::alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uin
     *vaddr = it->second.ram.allocateMemory(it->second.root, *addr, size);
 	/// 将ram分配的物理地址和addrManager分配的物理地址关联起来
 	addrManager_.attachPaddr(taskID, kernelID, addr, vaddr);
-	PCOUT_INFO << "allocating memory at vaddr of 0x" <<hex << *addr << ", associated paddr of 0x" << *vaddr  << endl;
+	PCOUT_INFO << "allocating memory at vaddr of 0x" <<hex << *addr << ", associated paddr of 0x" << *vaddr
+	<<", size of "<<dec<<size << "bytes"<< endl;
     delete addr;
     return ret0 || !*vaddr;
 #endif
@@ -314,29 +315,29 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
 //    auto curContextIt = contextList_.begin();
 //    while(curContextIt != contextList_.end()) {
 //        if(*curContextIt == contextID) {
-    if(contextMemory_.find(contextID) == contextMemory_.end()) {
+    if(contextMemory_.find(contextID) == contextMemory_.end()) {/// 检查这个context是否存在
         PCOUT_ERROR << "Context of ID" << contextID <<" has not created, can't allocate memory!" << endl;
         return -1;
     }
 
-                switch (BUF_TYPE) {
-                    case READ_ONLY:
-                        if(size < RWDATA_BASE - RODATA_BASE) {
-                            *vaddr = RODATA_BASE;
-                            break;
-                        } else {
-                            PCOUT_ERROR << "buffer size too large, error!" << endl;
-                            return -1;
-                        }
-                    case READ_WRITE: if(size < RWDATA_BASE - RODATA_BASE) {
-                            *vaddr = RWDATA_BASE;
-                            break;
-                        } else {
-                            PCOUT_ERROR << "buffer size too large, error!" << endl;
-                            return -1;
-                        }
-                    default: break;
-                }
+	switch (BUF_TYPE) {///
+		case READ_ONLY:
+			if(size < RWDATA_BASE - RODATA_BASE) {
+				*vaddr = RODATA_BASE;
+				break;
+			} else {
+				PCOUT_ERROR << "buffer size too large, error!" << endl;
+				return -1;
+			}
+		case READ_WRITE: if(size < RWDATA_BASE - RODATA_BASE) {
+				*vaddr = RWDATA_BASE;
+				break;
+			} else {
+				PCOUT_ERROR << "buffer size too large, error!" << endl;
+				return -1;
+			}
+		default: break;
+	}
     if(contextMemory_.at(contextID) == nullptr) {
                 currentItem = new addrItem(kernelID, contextID, *vaddr, size);
                 contextMemory_.at(contextID) = currentItem;
@@ -373,10 +374,22 @@ int addr_manager::createNewContext(uint64_t contextID) {
     auto p = t.first;
     return 0;
 }
-
+/// 插入一个地址元素,如果contextMemory_中已经存在读写类型的地址，并且需要插入只读类型的地址，则要插入的地址为开头,
+/// 同时修改该context的地址链表的开头元素为要插入的元素
+/// \param currentItem 在该元素的后面插入
+/// \param contextID
+/// \param kernelID
+/// \param vaddr
+/// \param size
 void addr_manager::insertNewItem(addrItem *currentItem, uint64_t contextID, uint64_t kernelID, uint64_t *vaddr,
                                  uint64_t size) {
     auto tmp = new addrItem(kernelID, contextID, *vaddr, size);
+	if(tmp->vaddr == RODATA_BASE && currentItem->vaddr == RWDATA_BASE) {
+		tmp->succContextItem = currentItem;
+		currentItem->prevContextItem = tmp;
+		contextMemory_.at(contextID) = tmp;
+		return;
+	}
     tmp->succContextItem = (currentItem)->succContextItem;
     tmp->prevContextItem = currentItem;
     if(currentItem->succContextItem != nullptr)
@@ -384,64 +397,63 @@ void addr_manager::insertNewItem(addrItem *currentItem, uint64_t contextID, uint
     (currentItem)->succContextItem = tmp;
 
 }
-
+/// https://raw.githubusercontent.com/yangzexia/md-image/image/202305171429512.svg
 int addr_manager::allocVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE) {
 
-    while((*rootItem) != nullptr) {
+	uint64_t curAddr;
+	switch (BUF_TYPE) {/// 寻找下一个还没有分配的地址
+		case READ_ONLY:
+			if((*rootItem)->vaddr==RODATA_BASE) {
+				*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
+				while ((*rootItem)->vaddr < RWDATA_BASE && (*rootItem)->succContextItem != nullptr) {
+					*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
+					if (*vaddr + size <= (*rootItem)->succContextItem->vaddr) {
+						break;/// 该地址符合条件，跳出循环
+					}
+					*rootItem = (*rootItem)->succContextItem;
+				}
 
-        uint64_t curAddr;
-        switch (BUF_TYPE) {
-            case READ_ONLY:
-                curAddr = (*rootItem)->vaddr + (*rootItem)->size;
-                break;
-            case READ_WRITE:
-				curAddr = (*rootItem)->vaddr + (*rootItem)->size;
-                while ((*rootItem)->vaddr < RWDATA_BASE) {
-                    if((*rootItem)->succContextItem == nullptr) {
-                        curAddr = RWDATA_BASE;
-                        break;
-                    }
-                    *rootItem = (*rootItem)->succContextItem;
-                    curAddr = (*rootItem)->vaddr + (*rootItem)->size;
-                }
-                break;
-        }
-        uint64_t newVaddr;
-
-            if((*rootItem)->succContextItem == nullptr){
-                newVaddr = curAddr;
-            }else
-                if((size <= ((*rootItem)->succContextItem->vaddr - curAddr)))
-                    newVaddr = curAddr;
-                else {
-                    (*rootItem) = (*rootItem)->succContextItem;
-                    continue;
-                }
-            //地址已确定，检查范围是否符合BUF_TYPE
-            switch (BUF_TYPE) {
-                case READ_ONLY: if((newVaddr >= RODATA_BASE) && (newVaddr < RWDATA_BASE)) {
-                        *vaddr = newVaddr;
-                        break;
-                    } else {
-                        PCOUT_ERROR << "vaddr range0x" <<hex<< *vaddr<<dec<<" not match with BUF_TYPE of READ_ONLY!" << endl;
-                        return -1;
-                    }
-                case READ_WRITE: if((newVaddr >= RWDATA_BASE)) {
-                        *vaddr = newVaddr;
-                        break;
-                    } else {
-                        PCOUT_ERROR << "vaddr range0x" <<hex<< *vaddr<<dec<<" not match with BUF_TYPE of READ_WRITE!" << endl;
+				if ((*rootItem)->succContextItem == nullptr || (*rootItem)->succContextItem->vaddr >= RWDATA_BASE) {
+					if (*vaddr + size <= RWDATA_BASE)
+						break;
+					else {
+						PCOUT_ERROR << "memory needs to allocate of size of 0x" << hex << size << dec
+									<< "failed! No enough space!" << endl;
 						return -1;
-                    }
-                default: {
-                    PCOUT_ERROR << "unknown BUF_TYPE!" << BUF_TYPE<<" check your input!" <<endl;
-					return -1;
-                }
-            }
-            //跳出while循环
-            break;
+					}
+				}
+			} else {
+				*vaddr = RODATA_BASE;
+			}
+			break;
 
-    }
+
+		case READ_WRITE:
+			if((*rootItem)->vaddr == RODATA_BASE) {/// 如果第一个元素是只读类型的地址，则遍历到RW_BASE,如果没有RW的地址，则要分配的地址为RW_BASE
+				while((*rootItem)->vaddr < RWDATA_BASE && (*rootItem)->succContextItem != nullptr) {
+					if ((*rootItem)->succContextItem == nullptr) {
+						*vaddr = RWDATA_BASE;
+						return 0;
+					}
+					*rootItem = (*rootItem)->succContextItem;
+				}
+			}
+			*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
+			while ((*rootItem)->vaddr < BUF_PARA_BASE && (*rootItem)->succContextItem != nullptr) {
+				*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
+				if (*vaddr + size <= (*rootItem)->succContextItem->vaddr) {
+					break;/// 该地址符合条件，跳出循环
+				}
+				*rootItem = (*rootItem)->succContextItem;
+			}
+			if ((*rootItem)->succContextItem == nullptr && (*vaddr + size > BUF_PARA_BASE)) {
+				PCOUT_ERROR << "memory needs to allocate of size of 0x" << hex << size << dec
+							<< "failed! No enough space!" << endl;
+				return -1;
+			}
+			break;
+	}
+
 	return 0;
 }
 

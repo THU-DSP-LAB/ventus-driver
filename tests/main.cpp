@@ -335,6 +335,7 @@ int main(int argc, char *argv[]) {
   std::cout << "allocate shared memory" << std::endl;
   uint32_t alloc_size = std::max<uint32_t>(buf_size, sizeof(kernel_arg_t));
   uint64_t *buf_addr = new uint64_t;
+	RT_CHECK(vt_buf_alloc(device, alloc_size, buf_addr, READ_WRITE, default_taskID, default_kernelID));
   RT_CHECK(vt_buf_alloc(device, alloc_size, buf_addr, READ_ONLY, default_taskID, default_kernelID));
 
   // run tests  
