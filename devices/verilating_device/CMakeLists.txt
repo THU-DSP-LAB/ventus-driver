@@ -1,4 +1,3 @@
-cmake_minimum_required(VERSION 3.22)
 set(PROJECT rtlsim)
 set(PROJECT2 rtllib)
 PROJECT(${PROJECT})
