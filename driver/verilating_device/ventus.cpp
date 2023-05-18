@@ -223,7 +223,7 @@ extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint6
     offset += chunk_size;
   }
 
-//  vt_buf_free(buffer);
+	free(buffer);
 
   return 0;
 }

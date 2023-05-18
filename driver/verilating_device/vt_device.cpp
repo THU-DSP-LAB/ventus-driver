@@ -404,13 +404,14 @@ int addr_manager::allocVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size
 	switch (BUF_TYPE) {/// 寻找下一个还没有分配的地址
 		case READ_ONLY:
 			if((*rootItem)->vaddr==RODATA_BASE) {
-				*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
+				*vaddr = aligned_size((*rootItem)->vaddr + (*rootItem)->size, PAGESIZE);
 				while ((*rootItem)->vaddr < RWDATA_BASE && (*rootItem)->succContextItem != nullptr) {
-					*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
+//					*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
 					if (*vaddr + size <= (*rootItem)->succContextItem->vaddr) {
 						break;/// 该地址符合条件，跳出循环
 					}
 					*rootItem = (*rootItem)->succContextItem;
+					*vaddr = aligned_size((*rootItem)->vaddr + (*rootItem)->size, PAGESIZE);
 				}
 
 				if ((*rootItem)->succContextItem == nullptr || (*rootItem)->succContextItem->vaddr >= RWDATA_BASE) {
@@ -438,13 +439,15 @@ int addr_manager::allocVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size
 					*rootItem = (*rootItem)->succContextItem;
 				}
 			}
-			*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
+			*vaddr = aligned_size((*rootItem)->vaddr + (*rootItem)->size, PAGESIZE);
 			while ((*rootItem)->vaddr < BUF_PARA_BASE && (*rootItem)->succContextItem != nullptr) {
-				*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
+//				*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
 				if (*vaddr + size <= (*rootItem)->succContextItem->vaddr) {
 					break;/// 该地址符合条件，跳出循环
 				}
 				*rootItem = (*rootItem)->succContextItem;
+//				if((*rootItem)->succContextItem == nullptr)
+					*vaddr = aligned_size((*rootItem)->vaddr + (*rootItem)->size, PAGESIZE);
 			}
 			if ((*rootItem)->succContextItem == nullptr && (*vaddr + size > BUF_PARA_BASE)) {
 				PCOUT_ERROR << "memory needs to allocate of size of 0x" << hex << size << dec

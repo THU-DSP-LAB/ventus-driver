@@ -7,7 +7,6 @@ public:
     PhysicalMemory *pmm;
     Memory(uint64_t max_range){
         pmm = new PhysicalMemory(max_range);
-        std::cout << max_range << std::endl;
     }
     Memory(const Memory& m) {
         if(m.pmm != nullptr)
