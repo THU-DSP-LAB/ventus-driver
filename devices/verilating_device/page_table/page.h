@@ -11,7 +11,7 @@ public:
     uint8_t *data = nullptr;
     Pages(uint64_t size){
         //uint64_t page_num = (size + PageSize - 1) / PageSize;
-        data = new uint8_t[size];
+        data = new uint8_t[size]();
     }
     ~Pages(){
         if(data != nullptr)
