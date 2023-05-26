@@ -166,7 +166,12 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     if(hdevice == nullptr)
         return -1;
     auto* device = (vt_device*) hdevice;
+#ifdef DEBUG_VIRTUAL_ADDR
+	device->execute_all_kernel();
+	return 0;
+#endif
     return device->wait(timeout);
+
 }
 
 extern int vt_finish_all_kernel(vt_device_h hdevice, queue<int> *finished_kernel_list) {
@@ -217,14 +222,12 @@ extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint6
 
     err = vt_copy_to_dev(device, dev_mem_addr, buffer, chunk_size, taskID, 0);
     if (err != 0) {
-      vt_buf_free(device, buffer_transfer_size, &dev_mem_addr, taskID, 0);
+//      vt_buf_free(device, buffer_transfer_size, &dev_mem_addr, taskID, 0);
       return err;
     }
     offset += chunk_size;
   }
-
-//  vt_buf_free(buffer);
-
+	free(buffer);
   return 0;
 }
 

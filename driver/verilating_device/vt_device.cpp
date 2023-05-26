@@ -47,7 +47,8 @@ int vt_device::alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uin
     *vaddr = it->second.ram.allocateMemory(it->second.root, *addr, size);
 	/// 将ram分配的物理地址和addrManager分配的物理地址关联起来
 	addrManager_.attachPaddr(taskID, kernelID, addr, vaddr);
-	PCOUT_INFO << "allocating memory at vaddr of 0x" <<hex << *addr << ", associated paddr of 0x" << *vaddr  << endl;
+	PCOUT_INFO << "allocating memory at vaddr of 0x" <<hex << *addr << ", associated paddr of 0x" << *vaddr
+	<<", size of "<<dec<<size << "bytes"<< endl;
     delete addr;
     return ret0 || !*vaddr;
 #endif
@@ -110,44 +111,24 @@ int vt_device::start(int taskID, void* metaData){
 
     host_port_t *devicePort = new host_port_t;
     auto inputData = (meta_data *)metaData;
-#ifndef DEBUG_VIRTUAL_ADDR
+#ifdef DEBUG_VIRTUAL_ADDR
     uint64_t wgNum = inputData->kernel_size[0] * inputData->kernel_size[1]*inputData->kernel_size[2];
     uint64_t pdsParam = inputData->pdsSize * inputData->wf_size * inputData->wg_size;
-    devicePort->host_req_wg_id = 0;
     devicePort->host_req_num_wf = inputData->wg_size;
     devicePort->host_req_wf_size = inputData->wf_size;
-    devicePort->host_req_start_pc = 0;
-    devicePort->host_req_vgpr_size_total = inputData->wg_size * inputData->vgprUsage;
-    devicePort->host_req_sgpr_size_total = inputData->wg_size * inputData->sgprUsage;
-    devicePort->host_req_sgpr_size_per_wf = inputData->sgprUsage;
-    devicePort->host_req_vgpr_size_per_wf = inputData->vgprUsage;
-    devicePort->host_req_lds_size_total = inputData->ldsSize;
-    devicePort->host_req_gds_size_total = 0;
-    devicePort->host_req_gds_baseaddr = 0;
-    devicePort->host_req_pds_baseaddr = 0;
-    devicePort->host_req_csr_knl = inputData->metaDataBaseAddr;
     devicePort->host_req_kernel_size_3d_0 = inputData->kernel_size[0];
     devicePort->host_req_kernel_size_3d_1 = inputData->kernel_size[1];
     devicePort->host_req_kernel_size_3d_2 = inputData->kernel_size[2];
-
-#else
-    uint64_t wgNum = 4;
-    devicePort->host_req_gds_baseaddr = 128;
+    devicePort->host_req_vgpr_size_total = inputData->wg_size * inputData->vgprUsage;
+    devicePort->host_req_sgpr_size_total = inputData->wg_size * inputData->sgprUsage;
     devicePort->host_req_gds_size_total = 0;
-    devicePort->host_req_lds_size_total = 128* wgNum;
-    devicePort->host_req_num_wf = 4;
-    devicePort->host_req_sgpr_size_per_wf = 32;
-    devicePort->host_req_sgpr_size_total = 32;
-    devicePort->host_req_vgpr_size_total = 32;
-    devicePort->host_req_vgpr_size_per_wf = 32;
-    devicePort->host_req_start_pc = 0;
-    devicePort->host_req_wf_size = 32;
-    devicePort->host_req_wg_id = 0;
-    devicePort->host_req_csr_knl = 0;
-    devicePort->host_req_pds_baseaddr = 0;
-    devicePort->host_req_kernel_size_3d_0 = 0;
-    devicePort->host_req_kernel_size_3d_1 = 0;
-    devicePort->host_req_kernel_size_3d_2 = 0;
+    devicePort->host_req_vgpr_size_per_wf = inputData->vgprUsage;
+    devicePort->host_req_sgpr_size_per_wf = inputData->sgprUsage;
+    devicePort->host_req_start_pc = 0x2000a000;
+    devicePort->host_req_pds_baseaddr = inputData->pdsBaseAddr;
+    devicePort->host_req_csr_knl = inputData->metaDataBaseAddr;
+    devicePort->host_req_lds_size_total = inputData->ldsSize;
+    devicePort->host_req_gds_baseaddr = 0;
 #endif
 
     if(contextList_.find(taskID) == contextList_.end()) {
@@ -157,18 +138,37 @@ int vt_device::start(int taskID, void* metaData){
     processor_.attach_ram(&contextList_.find(taskID)->second.ram);
     //each function call send one block of a kernel
     for (int i = 0; i < wgNum; ++i) {
-#ifndef DEBUG_VIRTUAL_ADDR
-        uint64_t kernelID = inputData->kernel_id;
-        devicePort->host_req_pds_baseaddr = inputData->pdsBaseAddr + i * pdsParam;
-#else
-        uint64_t kernelID = 0;
-#endif
+	#ifdef DEBUG_VIRTUAL_ADDR
+			uint64_t kernelID = inputData->kernel_id;
+			devicePort->host_req_pds_baseaddr = inputData->pdsBaseAddr + i * pdsParam;
+	#else
+			uint64_t kernelID = 0;
+	#endif
         devicePort->host_req_wg_id = (inst_len)(((
                     kernelID<<(int)ceil(log2(MAX_CONTEXT)) | taskID)
                     <<((int)ceil(log2(MAX_KERNEL)) | kernelID))
                     <<((int)ceil(log2(NUM_SM*MAX_BLOCK_PER_SM)) | i))
                     <<((int)ceil(log2(NUM_SM)));
-        processor_.run(devicePort);
+		#ifdef DEBUG_VERIFY_HW
+				devicePort->host_req_wg_id = 0;
+				devicePort->host_req_num_wf = 2;
+				devicePort->host_req_wf_size = 0x8;
+				devicePort->host_req_kernel_size_3d_0 = 0;
+				devicePort->host_req_kernel_size_3d_1 = 0;
+				devicePort->host_req_kernel_size_3d_2 = 0;
+				devicePort->host_req_vgpr_size_total = 0x040;
+				devicePort->host_req_sgpr_size_total = 0x040;
+				devicePort->host_req_gds_size_total = 0;
+				devicePort->host_req_vgpr_size_per_wf = 0x020;
+				devicePort->host_req_sgpr_size_per_wf = 0x020;
+				devicePort->host_req_start_pc = 0x80000000;
+				devicePort->host_req_pds_baseaddr = 0x80001000;
+				devicePort->host_req_csr_knl = 0x80023000;
+				devicePort->host_req_lds_size_total = 0x80;
+				devicePort->host_req_gds_baseaddr = 0x00000000;
+		#endif
+
+		processor_.run(devicePort);
         //更新contextList_
         map<int, _state>firedBlk;
         firedBlk.emplace((int)(devicePort->host_req_wg_id), UNFINISH);
@@ -198,6 +198,7 @@ int vt_device::wait(uint64_t time){
     // 根据GPGPU返回的block完成情况更新任务队列，将已完成的block ID与保存的list中的block ID比较
 
     std::queue<int> finished_block = processor_.wait(time);
+
     while(!finished_block.empty()) {
         bool block_legal = true;
         //根据硬件返回的已完成blkID，解码出所属的context, kernel和原本的block
@@ -264,22 +265,28 @@ queue<int> vt_device::get_finished_kernel() {
  */
 queue<int> vt_device::execute_all_kernel() {
     queue<int> tmp;
-    while(!get_finished_context().empty()) {
+	int cnt = 0;
+    while(!all_context_finished()) {
         while(!finished_kernel_l.empty()) {
             tmp.push(finished_kernel_l.front());
             finished_kernel_l.pop();
         }
         wait(RUN_DELAY);
+		cnt++;
+		if(cnt > 30) break;
     }
     return tmp;
 }
 
-
+/**
+ * 返回已经完成的contextID,如果没有执行完成，硬件时钟并不会前进
+ * @return <queue<int>> contextID的队列
+ */
 queue<int> vt_device::get_finished_context() {
     queue<int> tmp;
     auto it = contextList_.begin();
     while(it != contextList_.end()) {
-        if(it->second.context_finished()){
+        if(it->second.context_finished()){ ///< 这个context里的所有kernel都执行完成了
             tmp.push(it->second.contextID);
             it = contextList_.erase(it);
         }
@@ -288,7 +295,14 @@ queue<int> vt_device::get_finished_context() {
     return tmp;
 }
 
-
+bool vt_device::all_context_finished() {
+	auto it = contextList_.begin();
+	while(it != contextList_.end()) {
+		if(!it->second.context_finished())
+			return false;
+	}
+	return true;
+}
 
 
 addr_manager::~addr_manager() {
@@ -314,29 +328,29 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
 //    auto curContextIt = contextList_.begin();
 //    while(curContextIt != contextList_.end()) {
 //        if(*curContextIt == contextID) {
-    if(contextMemory_.find(contextID) == contextMemory_.end()) {
+    if(contextMemory_.find(contextID) == contextMemory_.end()) {/// 检查这个context是否存在
         PCOUT_ERROR << "Context of ID" << contextID <<" has not created, can't allocate memory!" << endl;
         return -1;
     }
 
-                switch (BUF_TYPE) {
-                    case READ_ONLY:
-                        if(size < RWDATA_BASE - RODATA_BASE) {
-                            *vaddr = RODATA_BASE;
-                            break;
-                        } else {
-                            PCOUT_ERROR << "buffer size too large, error!" << endl;
-                            return -1;
-                        }
-                    case READ_WRITE: if(size < RWDATA_BASE - RODATA_BASE) {
-                            *vaddr = RWDATA_BASE;
-                            break;
-                        } else {
-                            PCOUT_ERROR << "buffer size too large, error!" << endl;
-                            return -1;
-                        }
-                    default: break;
-                }
+	switch (BUF_TYPE) {///
+		case READ_ONLY:
+			if(size < RWDATA_BASE - RODATA_BASE) {
+				*vaddr = RODATA_BASE;
+				break;
+			} else {
+				PCOUT_ERROR << "buffer size too large, error!" << endl;
+				return -1;
+			}
+		case READ_WRITE: if(size < RWDATA_BASE - RODATA_BASE) {
+				*vaddr = RWDATA_BASE;
+				break;
+			} else {
+				PCOUT_ERROR << "buffer size too large, error!" << endl;
+				return -1;
+			}
+		default: break;
+	}
     if(contextMemory_.at(contextID) == nullptr) {
                 currentItem = new addrItem(kernelID, contextID, *vaddr, size);
                 contextMemory_.at(contextID) = currentItem;
@@ -373,10 +387,22 @@ int addr_manager::createNewContext(uint64_t contextID) {
     auto p = t.first;
     return 0;
 }
-
+/// 插入一个地址元素,如果contextMemory_中已经存在读写类型的地址，并且需要插入只读类型的地址，则要插入的地址为开头,
+/// 同时修改该context的地址链表的开头元素为要插入的元素
+/// \param currentItem 在该元素的后面插入
+/// \param contextID
+/// \param kernelID
+/// \param vaddr
+/// \param size
 void addr_manager::insertNewItem(addrItem *currentItem, uint64_t contextID, uint64_t kernelID, uint64_t *vaddr,
                                  uint64_t size) {
     auto tmp = new addrItem(kernelID, contextID, *vaddr, size);
+	if(tmp->vaddr == RODATA_BASE && currentItem->vaddr == RWDATA_BASE) {
+		tmp->succContextItem = currentItem;
+		currentItem->prevContextItem = tmp;
+		contextMemory_.at(contextID) = tmp;
+		return;
+	}
     tmp->succContextItem = (currentItem)->succContextItem;
     tmp->prevContextItem = currentItem;
     if(currentItem->succContextItem != nullptr)
@@ -384,64 +410,66 @@ void addr_manager::insertNewItem(addrItem *currentItem, uint64_t contextID, uint
     (currentItem)->succContextItem = tmp;
 
 }
-
+/// https://raw.githubusercontent.com/yangzexia/md-image/image/202305171429512.svg
 int addr_manager::allocVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size, int BUF_TYPE) {
 
-    while((*rootItem) != nullptr) {
+	uint64_t curAddr;
+	switch (BUF_TYPE) {/// 寻找下一个还没有分配的地址
+		case READ_ONLY:
+			if((*rootItem)->vaddr==RODATA_BASE) {
+				*vaddr = aligned_size((*rootItem)->vaddr + (*rootItem)->size, PAGESIZE);
+				while ((*rootItem)->vaddr < RWDATA_BASE && (*rootItem)->succContextItem != nullptr) {
+//					*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
+					if (*vaddr + size <= (*rootItem)->succContextItem->vaddr) {
+						break;/// 该地址符合条件，跳出循环
+					}
+					*rootItem = (*rootItem)->succContextItem;
+					*vaddr = aligned_size((*rootItem)->vaddr + (*rootItem)->size, PAGESIZE);
+				}
 
-        uint64_t curAddr;
-        switch (BUF_TYPE) {
-            case READ_ONLY:
-                curAddr = (*rootItem)->vaddr + (*rootItem)->size;
-                break;
-            case READ_WRITE:
-				curAddr = (*rootItem)->vaddr + (*rootItem)->size;
-                while ((*rootItem)->vaddr < RWDATA_BASE) {
-                    if((*rootItem)->succContextItem == nullptr) {
-                        curAddr = RWDATA_BASE;
-                        break;
-                    }
-                    *rootItem = (*rootItem)->succContextItem;
-                    curAddr = (*rootItem)->vaddr + (*rootItem)->size;
-                }
-                break;
-        }
-        uint64_t newVaddr;
-
-            if((*rootItem)->succContextItem == nullptr){
-                newVaddr = curAddr;
-            }else
-                if((size <= ((*rootItem)->succContextItem->vaddr - curAddr)))
-                    newVaddr = curAddr;
-                else {
-                    (*rootItem) = (*rootItem)->succContextItem;
-                    continue;
-                }
-            //地址已确定，检查范围是否符合BUF_TYPE
-            switch (BUF_TYPE) {
-                case READ_ONLY: if((newVaddr >= RODATA_BASE) && (newVaddr < RWDATA_BASE)) {
-                        *vaddr = newVaddr;
-                        break;
-                    } else {
-                        PCOUT_ERROR << "vaddr range0x" <<hex<< *vaddr<<dec<<" not match with BUF_TYPE of READ_ONLY!" << endl;
-                        return -1;
-                    }
-                case READ_WRITE: if((newVaddr >= RWDATA_BASE)) {
-                        *vaddr = newVaddr;
-                        break;
-                    } else {
-                        PCOUT_ERROR << "vaddr range0x" <<hex<< *vaddr<<dec<<" not match with BUF_TYPE of READ_WRITE!" << endl;
+				if ((*rootItem)->succContextItem == nullptr || (*rootItem)->succContextItem->vaddr >= RWDATA_BASE) {
+					if (*vaddr + size <= RWDATA_BASE)
+						break;
+					else {
+						PCOUT_ERROR << "memory needs to allocate of size of 0x" << hex << size << dec
+									<< "failed! No enough space!" << endl;
 						return -1;
-                    }
-                default: {
-                    PCOUT_ERROR << "unknown BUF_TYPE!" << BUF_TYPE<<" check your input!" <<endl;
-					return -1;
-                }
-            }
-            //跳出while循环
-            break;
+					}
+				}
+			} else {
+				*vaddr = RODATA_BASE;
+			}
+			break;
 
-    }
+
+		case READ_WRITE:
+			if((*rootItem)->vaddr == RODATA_BASE) {/// 如果第一个元素是只读类型的地址，则遍历到RW_BASE,如果没有RW的地址，则要分配的地址为RW_BASE
+				while((*rootItem)->vaddr < RWDATA_BASE && (*rootItem)->succContextItem != nullptr) {
+					if ((*rootItem)->succContextItem == nullptr) {
+						*vaddr = RWDATA_BASE;
+						return 0;
+					}
+					*rootItem = (*rootItem)->succContextItem;
+				}
+			}
+			*vaddr = aligned_size((*rootItem)->vaddr + (*rootItem)->size, PAGESIZE);
+			while ((*rootItem)->vaddr < BUF_PARA_BASE && (*rootItem)->succContextItem != nullptr) {
+//				*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
+				if (*vaddr + size <= (*rootItem)->succContextItem->vaddr) {
+					break;/// 该地址符合条件，跳出循环
+				}
+				*rootItem = (*rootItem)->succContextItem;
+//				if((*rootItem)->succContextItem == nullptr)
+					*vaddr = aligned_size((*rootItem)->vaddr + (*rootItem)->size, PAGESIZE);
+			}
+			if ((*rootItem)->succContextItem == nullptr && (*vaddr + size > BUF_PARA_BASE)) {
+				PCOUT_ERROR << "memory needs to allocate of size of 0x" << hex << size << dec
+							<< "failed! No enough space!" << endl;
+				return -1;
+			}
+			break;
+	}
+
 	return 0;
 }
 

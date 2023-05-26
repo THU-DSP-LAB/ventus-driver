@@ -11,7 +11,7 @@ public:
     uint8_t *data = nullptr;
     Pages(uint64_t size){
         //uint64_t page_num = (size + PageSize - 1) / PageSize;
-        data = new uint8_t[size];
+        data = new uint8_t[size]();
     }
     ~Pages(){
         if(data != nullptr)
@@ -36,11 +36,12 @@ public:
     }
     
     Block(const Block &blk):
-    addr(blk.addr), size(blk.size){
+    addr(blk.addr), size(blk.size), pages(nullptr){
         printf("Copy Cosntructor\n");
         if(blk.pages != nullptr){
-            pages = new Pages(blk.size);
-            for(uint64_t i = 0; i < size; i++){
+			uint64_t num = (size + SV39::PageSize - 1) / SV39::PageSize;
+			pages = new Pages(num * SV39::PageSize);
+            for(uint64_t i = 0; i < num * SV39::PageSize; i++){
                 pages->data[i] = blk.pages->data[i];
             }
         }
@@ -75,6 +76,15 @@ public:
     bool operator==(const uint64_t &pos){
         return this->addr <= pos && (this->addr + this->size) > pos;
     }
+	Block& operator=(Block&& blk) noexcept {
+		if (this != &blk) {
+			addr = blk.addr;
+			size = blk.size;
+			pages = blk.pages;
+			blk.pages = nullptr;
+		}
+		return *this;
+	}
 
     uint64_t end() const{
         return addr + size;
@@ -250,7 +260,7 @@ public:
         }
         return 0;
     }
-
+// 这里可能有bug, 明天来看看
     uint64_t findUsable(uint64_t size){
         // not support megapage / gigapage yet
         size = (size + SV39::PageSize - 1) / SV39::PageSize * SV39::PageSize;

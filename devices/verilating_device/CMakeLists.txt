@@ -1,4 +1,3 @@
-cmake_minimum_required(VERSION 3.22)
 set(PROJECT rtlsim)
 set(PROJECT2 rtllib)
 PROJECT(${PROJECT})
@@ -32,7 +31,7 @@ set(VL_FLAGS
             -Wno-DECLFILENAME -Wno-REDEFMACRO -Wno-MODDUP -Wno-UNUSEDSIGNAL
             --x-initial unique --x-assign unique
 #            --lib-create ${PROJECT2}
-            --debug
+            --debug --trace-structs
             )
 
 #使用verilator in cmake生成verilator动态库
@@ -50,6 +49,7 @@ add_library(${PROJECT2} SHARED)
 target_link_libraries(${PROJECT} PUBLIC ${PROJECT2})
 
 verilate(${PROJECT2}
+        TRACE
         SOURCES ${RTL_SRC}
         TOP_MODULE ${TOP}
         INCLUDE_DIRS ${RTL_DIR}

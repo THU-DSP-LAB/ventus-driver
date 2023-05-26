@@ -1,6 +1,5 @@
-cmake_minimum_required(VERSION 3.22)
+if(ENABLE_VERILATOR)
+    add_subdirectory(verilating_device)
+endif()
 
-
-
-add_subdirectory(verilating_device)
 add_subdirectory(spike_device)

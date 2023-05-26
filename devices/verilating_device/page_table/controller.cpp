@@ -73,6 +73,8 @@ public:
         if(clk){
             rsp_ready_ = rsp->ready;
             req_valid_ = req->valid;
+			rsp_valid_ = rsp->valid;
+			req_ready_ = req->ready;
             return;
         }
         if(time_remain_ != 0){
@@ -80,11 +82,12 @@ public:
             rsp->valid = 0;
             --time_remain_;
             return;
-        }
+        }else{
+			rsp->valid = 1;
+		}
+//		int rsp_valid_last_cycle_;
         if(rw_ != 0){ // response
-            rsp_valid_ = 1;
-            req_ready_ = 0;
-            if(rsp_ready_ && rsp->valid){
+            if(rsp->ready && rsp->valid){
                 rsp->size = size_;
                 rsp->source = source_;
                 rsp->opcode = rw_;
@@ -93,14 +96,16 @@ public:
                 if(rw_ == 1) // write
                     mem->writeWordsPhysical<uint64_t>(addr_, num_, data, &mask_);
                 rw_ = 0;
-                rsp_valid_ = 0;
+                rsp_valid_ = 1;
                 req_ready_ = 1;
             }
+            rsp_valid_ = 1;
+            req_ready_ = 0;
         }
         else{ // request
             rsp_valid_ = 0;
             req_ready_ = 1;
-            if(req_valid_ && req->ready){
+            if(req->valid && req->ready){
                 rw_ = req->opcode;
                 addr_ = req->address;
                 size_ = req->size;
@@ -114,6 +119,7 @@ public:
                 rsp_valid_ = 0;
                 req_ready_ = 0;
             }
+
         }
         rsp->valid = rsp_valid_;
         req->ready = req_ready_;

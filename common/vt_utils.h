@@ -44,7 +44,7 @@ typedef struct {
 
 /**
  * 将size对齐
- * @param size 要对齐的大小
+ * @param size 输入的大小
  * @param align_block 和该大小对齐
  * @return 对齐后的大小
  */

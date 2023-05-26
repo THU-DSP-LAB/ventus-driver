@@ -10,3 +10,5 @@
 
 #define READ_WRITE 0
 #define READ_ONLY 1
+
+#define PAGESIZE 		1ull << 12ull  ///< 4KB
