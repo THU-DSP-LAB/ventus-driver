@@ -41,6 +41,8 @@ option(ENABLE_INSTALL "if install driver library to install dir" OFF)
 set(DRIVER_LIB_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/lib/)
 message(STATUS "DRIVER_LIB_INSTALL_DIR:" ${DRIVER_LIB_INSTALL_DIR} "\n")
 
+option(ENABLE_VERILATOR "if add verilated rtl device" OFF)
+
 add_subdirectory(devices)
 add_subdirectory(driver)
 add_subdirectory(tests)

@@ -73,6 +73,8 @@ public:
         if(clk){
             rsp_ready_ = rsp->ready;
             req_valid_ = req->valid;
+			rsp_valid_ = rsp->valid;
+			req_ready_ = req->ready;
             return;
         }
         if(time_remain_ != 0){
@@ -80,7 +82,9 @@ public:
             rsp->valid = 0;
             --time_remain_;
             return;
-        }
+        }else{
+			rsp->valid = 1;
+		}
         if(rw_ != 0){ // response
             rsp_valid_ = 1;
             req_ready_ = 0;
@@ -93,7 +97,7 @@ public:
                 if(rw_ == 1) // write
                     mem->writeWordsPhysical<uint64_t>(addr_, num_, data, &mask_);
                 rw_ = 0;
-                rsp_valid_ = 0;
+                rsp_valid_ = 1;
                 req_ready_ = 1;
             }
         }

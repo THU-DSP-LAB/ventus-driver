@@ -166,7 +166,12 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     if(hdevice == nullptr)
         return -1;
     auto* device = (vt_device*) hdevice;
+#ifdef DEBUG_VIRTUAL_ADDR
+	device->execute_all_kernel();
+	return 0;
+#endif
     return device->wait(timeout);
+
 }
 
 extern int vt_finish_all_kernel(vt_device_h hdevice, queue<int> *finished_kernel_list) {

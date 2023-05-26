@@ -34,21 +34,21 @@ enum _state{UNFINISH, FINISH};
 
 struct meta_data{
     uint64_t kernel_id;
-    uint64_t kernel_size[3];///> 每个kernel的workgroup三维数目
-    uint64_t wf_size; ///> 每个warp的thread数目
-    uint64_t wg_size; ///> 每个workgroup的warp数目
-    uint64_t metaDataBaseAddr;///> CSR_KNL的值，
-    uint64_t ldsSize;///> 每个workgroup使用的local memory的大小
-    uint64_t pdsSize;///> 每个thread用到的private memory大小
-    uint64_t sgprUsage;///> 每个workgroup使用的标量寄存器数目
-    uint64_t vgprUsage;///> 每个thread使用的向量寄存器数目
-    uint64_t pdsBaseAddr;///> private memory的基址，要转成每个workgroup的基地址， wf_size*wg_size*pdsSize
+    uint64_t kernel_size[3];///< 每个kernel的workgroup三维数目
+    uint64_t wf_size; ///< 每个warp的thread数目
+    uint64_t wg_size; ///< 每个workgroup的warp数目
+    uint64_t metaDataBaseAddr;///< CSR_KNL的值，
+    uint64_t ldsSize;///< 每个workgroup使用的local memory的大小
+    uint64_t pdsSize;///< 每个thread用到的private memory大小
+    uint64_t sgprUsage;///< 每个workgroup使用的标量寄存器数目
+    uint64_t vgprUsage;///< 每个thread使用的向量寄存器数目
+    uint64_t pdsBaseAddr;///< private memory的基址，要转成每个workgroup的基地址， wf_size*wg_size*pdsSize
 };
 
 
-struct kernel_info{
-    map<int, _state> blk_list;
-    _state state;
+struct kernel_info{ ///< 一个kernel由多个NDrange组成，一个NDrange由多个workgroup组成，每个workgroup在硬件上执行时映射到一个block.
+    map<int, _state> blk_list; ///< 该kernel总共包含的block，以及每个block的执行状态
+    _state state; ///< 该kernel的执行状态
     kernel_info(map<int, _state> input_blk_list, _state stateIn):
                 blk_list(std::move(input_blk_list)),
                 state(stateIn){}
@@ -56,7 +56,7 @@ struct kernel_info{
 
 struct context_info{
     uint64_t contextID;
-    map<uint64_t, kernel_info> kernelList;
+    map<uint64_t, kernel_info> kernelList; ///< 该context已经发送给硬件执行的kernel（只有发送给硬件的kernel从会被记录）及其状态：执行完成，未完成
     uint64_t root;
     Memory ram = Memory(RAM_RANGE);
     context_info(uint64_t taskID) : ram(RAM_RANGE){
@@ -200,6 +200,7 @@ public:
     queue<int> get_finished_kernel();
     queue<int> get_finished_context();
     queue<int> execute_all_kernel();
+	bool all_context_finished();
 
 
 

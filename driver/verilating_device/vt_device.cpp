@@ -111,44 +111,24 @@ int vt_device::start(int taskID, void* metaData){
 
     host_port_t *devicePort = new host_port_t;
     auto inputData = (meta_data *)metaData;
-#ifndef DEBUG_VIRTUAL_ADDR
+#ifdef DEBUG_VIRTUAL_ADDR
     uint64_t wgNum = inputData->kernel_size[0] * inputData->kernel_size[1]*inputData->kernel_size[2];
     uint64_t pdsParam = inputData->pdsSize * inputData->wf_size * inputData->wg_size;
-    devicePort->host_req_wg_id = 0;
     devicePort->host_req_num_wf = inputData->wg_size;
     devicePort->host_req_wf_size = inputData->wf_size;
-    devicePort->host_req_start_pc = 0;
-    devicePort->host_req_vgpr_size_total = inputData->wg_size * inputData->vgprUsage;
-    devicePort->host_req_sgpr_size_total = inputData->wg_size * inputData->sgprUsage;
-    devicePort->host_req_sgpr_size_per_wf = inputData->sgprUsage;
-    devicePort->host_req_vgpr_size_per_wf = inputData->vgprUsage;
-    devicePort->host_req_lds_size_total = inputData->ldsSize;
-    devicePort->host_req_gds_size_total = 0;
-    devicePort->host_req_gds_baseaddr = 0;
-    devicePort->host_req_pds_baseaddr = 0;
-    devicePort->host_req_csr_knl = inputData->metaDataBaseAddr;
     devicePort->host_req_kernel_size_3d_0 = inputData->kernel_size[0];
     devicePort->host_req_kernel_size_3d_1 = inputData->kernel_size[1];
     devicePort->host_req_kernel_size_3d_2 = inputData->kernel_size[2];
-
-#else
-    uint64_t wgNum = 4;
-    devicePort->host_req_gds_baseaddr = 128;
+    devicePort->host_req_vgpr_size_total = inputData->wg_size * inputData->vgprUsage;
+    devicePort->host_req_sgpr_size_total = inputData->wg_size * inputData->sgprUsage;
     devicePort->host_req_gds_size_total = 0;
-    devicePort->host_req_lds_size_total = 128* wgNum;
-    devicePort->host_req_num_wf = 4;
-    devicePort->host_req_sgpr_size_per_wf = 32;
-    devicePort->host_req_sgpr_size_total = 32;
-    devicePort->host_req_vgpr_size_total = 32;
-    devicePort->host_req_vgpr_size_per_wf = 32;
-    devicePort->host_req_start_pc = 0;
-    devicePort->host_req_wf_size = 32;
-    devicePort->host_req_wg_id = 0;
-    devicePort->host_req_csr_knl = 0;
-    devicePort->host_req_pds_baseaddr = 0;
-    devicePort->host_req_kernel_size_3d_0 = 0;
-    devicePort->host_req_kernel_size_3d_1 = 0;
-    devicePort->host_req_kernel_size_3d_2 = 0;
+    devicePort->host_req_vgpr_size_per_wf = inputData->vgprUsage;
+    devicePort->host_req_sgpr_size_per_wf = inputData->sgprUsage;
+    devicePort->host_req_start_pc = 0x2000a000;
+    devicePort->host_req_pds_baseaddr = inputData->pdsBaseAddr;
+    devicePort->host_req_csr_knl = inputData->metaDataBaseAddr;
+    devicePort->host_req_lds_size_total = inputData->ldsSize;
+    devicePort->host_req_gds_baseaddr = 0;
 #endif
 
     if(contextList_.find(taskID) == contextList_.end()) {
@@ -158,18 +138,37 @@ int vt_device::start(int taskID, void* metaData){
     processor_.attach_ram(&contextList_.find(taskID)->second.ram);
     //each function call send one block of a kernel
     for (int i = 0; i < wgNum; ++i) {
-#ifndef DEBUG_VIRTUAL_ADDR
-        uint64_t kernelID = inputData->kernel_id;
-        devicePort->host_req_pds_baseaddr = inputData->pdsBaseAddr + i * pdsParam;
-#else
-        uint64_t kernelID = 0;
-#endif
+	#ifdef DEBUG_VIRTUAL_ADDR
+			uint64_t kernelID = inputData->kernel_id;
+			devicePort->host_req_pds_baseaddr = inputData->pdsBaseAddr + i * pdsParam;
+	#else
+			uint64_t kernelID = 0;
+	#endif
         devicePort->host_req_wg_id = (inst_len)(((
                     kernelID<<(int)ceil(log2(MAX_CONTEXT)) | taskID)
                     <<((int)ceil(log2(MAX_KERNEL)) | kernelID))
                     <<((int)ceil(log2(NUM_SM*MAX_BLOCK_PER_SM)) | i))
                     <<((int)ceil(log2(NUM_SM)));
-        processor_.run(devicePort);
+		#ifdef DEBUG_VERIFY_HW
+				devicePort->host_req_wg_id = 0;
+				devicePort->host_req_num_wf = 2;
+				devicePort->host_req_wf_size = 0x8;
+				devicePort->host_req_kernel_size_3d_0 = 0;
+				devicePort->host_req_kernel_size_3d_1 = 0;
+				devicePort->host_req_kernel_size_3d_2 = 0;
+				devicePort->host_req_vgpr_size_total = 0x040;
+				devicePort->host_req_sgpr_size_total = 0x040;
+				devicePort->host_req_gds_size_total = 0;
+				devicePort->host_req_vgpr_size_per_wf = 0x020;
+				devicePort->host_req_sgpr_size_per_wf = 0x020;
+				devicePort->host_req_start_pc = 0x80000000;
+				devicePort->host_req_pds_baseaddr = 0x80001000;
+				devicePort->host_req_csr_knl = 0x80023000;
+				devicePort->host_req_lds_size_total = 0x80;
+				devicePort->host_req_gds_baseaddr = 0x00000000;
+		#endif
+
+		processor_.run(devicePort);
         //更新contextList_
         map<int, _state>firedBlk;
         firedBlk.emplace((int)(devicePort->host_req_wg_id), UNFINISH);
@@ -199,6 +198,7 @@ int vt_device::wait(uint64_t time){
     // 根据GPGPU返回的block完成情况更新任务队列，将已完成的block ID与保存的list中的block ID比较
 
     std::queue<int> finished_block = processor_.wait(time);
+
     while(!finished_block.empty()) {
         bool block_legal = true;
         //根据硬件返回的已完成blkID，解码出所属的context, kernel和原本的block
@@ -265,22 +265,28 @@ queue<int> vt_device::get_finished_kernel() {
  */
 queue<int> vt_device::execute_all_kernel() {
     queue<int> tmp;
-    while(!get_finished_context().empty()) {
+	int cnt = 0;
+    while(!all_context_finished()) {
         while(!finished_kernel_l.empty()) {
             tmp.push(finished_kernel_l.front());
             finished_kernel_l.pop();
         }
         wait(RUN_DELAY);
+		cnt++;
+		if(cnt > 30) break;
     }
     return tmp;
 }
 
-
+/**
+ * 返回已经完成的contextID,如果没有执行完成，硬件时钟并不会前进
+ * @return <queue<int>> contextID的队列
+ */
 queue<int> vt_device::get_finished_context() {
     queue<int> tmp;
     auto it = contextList_.begin();
     while(it != contextList_.end()) {
-        if(it->second.context_finished()){
+        if(it->second.context_finished()){ ///< 这个context里的所有kernel都执行完成了
             tmp.push(it->second.contextID);
             it = contextList_.erase(it);
         }
@@ -289,7 +295,14 @@ queue<int> vt_device::get_finished_context() {
     return tmp;
 }
 
-
+bool vt_device::all_context_finished() {
+	auto it = contextList_.begin();
+	while(it != contextList_.end()) {
+		if(!it->second.context_finished())
+			return false;
+	}
+	return true;
+}
 
 
 addr_manager::~addr_manager() {

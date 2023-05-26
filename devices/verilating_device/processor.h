@@ -24,8 +24,11 @@
 #include "vt_memory.h"
 #include "vt_config.h"
 #include "vt_utils.h"
-
 #include "controller.cpp"
+
+#include <verilated.h>
+#include <verilated_vcd_c.h>
+
 #include "VGPGPU_top.h"
 
 
@@ -53,30 +56,40 @@ public:
     Impl();
     ~Impl();
     void attach_ram(Memory* ram);
+	/// 根据输入的GPGPU硬件接口信号，为verilator对象的接口赋值
+	/// \param input_sig 硬件接口的结构体
+	/// \return 执行完成则返回0
     int run(host_port_t* input_sig);
+	/// 等待特定个周期
+	/// \param cycle 输入
+	/// \return 以 queue 形式返回已经执行完成的block id
     std::queue<int> wait(uint64_t cycle);
+	/// 查询已经执行完成的block id
+	/// \return 以 queue 形式返回已经执行完成的block id
     std::queue<int> finished_block();
 
-    ///@deprecated
-    void cout_flush();
 
 private:
     void reset();
     void tick();
     void get_ram_bits_port();
-    void eval(int clk);
+    void eval();
 
 #ifdef DEBUG_GPGPU
-        VVentus *device_; ///< GPGPU
+        VGPGPU_top *device_; ///< GPGPU
 #endif
 #ifdef DEBUG_VIRTUAL_ADDR
 		VGPGPU_top *device_;
 #endif
+
+#ifdef DEBUG_TRACE
+		VerilatedVcdC* tfp_;
+#endif
+		VerilatedContext *contextp_;
+
         Memory *ram_; ///< GPGPU的ram
-
-        std::queue<int> finished_block_queue;
-
-        Controller mem_ctrl;
+        std::queue<int> finished_block_queue_;
+        Controller mem_ctrl_;
 
     };
  void test_proc();
