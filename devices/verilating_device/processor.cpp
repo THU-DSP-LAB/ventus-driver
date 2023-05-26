@@ -209,7 +209,7 @@ void Processor::Impl::get_ram_bits_port() {
 		}
 		mem_ctrl_.req->valid = device_->io_out_a_valid;
 		mem_ctrl_.rsp->ready = device_->io_out_d_ready;
-	} else {
+
 	/// out_d signals, update at falling edge
 		device_->io_out_a_ready = mem_ctrl_.req->ready;
 		device_->io_out_d_bits_opcode = mem_ctrl_.rsp->opcode;
