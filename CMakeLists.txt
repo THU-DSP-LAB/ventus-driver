@@ -45,5 +45,7 @@ option(ENABLE_VERILATOR "if add verilated rtl device" OFF)
 
 add_subdirectory(devices)
 add_subdirectory(driver)
+if(ENABLE_VERILATOR)
 add_subdirectory(tests)
+endif()
 add_subdirectory(codetests)
