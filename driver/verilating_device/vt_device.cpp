@@ -168,7 +168,7 @@ int vt_device::start(int taskID, void* metaData){
 				devicePort->host_req_gds_baseaddr = 0x00000000;
 		#endif
 
-		processor_.run(devicePort);
+		processor_.run(contextList_.find(taskID)->second.root, devicePort);
         //更新contextList_
         map<int, _state>firedBlk;
         firedBlk.emplace((int)(devicePort->host_req_wg_id), UNFINISH);

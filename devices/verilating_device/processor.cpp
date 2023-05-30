@@ -81,6 +81,7 @@ Processor::Impl::Impl(): mem_ctrl_(NUM_THREAD) {
 #endif
 #ifdef DEBUG_VIRTUAL_ADDR
 	device_ = new VGPGPU_top();
+	root_ = 0x20000000;
 #endif
 #ifdef DEBUG_TRACE
 	contextp_->traceEverOn(true);
@@ -111,7 +112,8 @@ void Processor::Impl::attach_ram(Memory* ram) {ram_ = ram;}
       * @param input_sig host request signals
       * @return int 
       */
-int Processor::Impl::run(host_port_t* input_sig) {
+int Processor::Impl::run(uint64_t root, host_port_t* input_sig) {
+	root_ = root;
 	if(!device_->clock)///< 保证输入信号在时钟下降沿变化
 		this->eval();
 	device_->io_host_req_bits_host_wg_id = input_sig->host_req_wg_id;
@@ -197,7 +199,7 @@ void Processor::Impl::tick(){
 void Processor::Impl::get_ram_bits_port() {
 	/// out_a signals, update at high voltage
 	if(device_->clock) {
-		mem_ctrl_.req->address = device_->io_out_a_bits_address;
+		mem_ctrl_.req->address = ram_.addrConvert(root_, device_->io_out_a_bits_address);
 		mem_ctrl_.req->opcode = device_->io_out_a_bits_opcode;
 		mem_ctrl_.req->size = device_->io_out_a_bits_opcode;
 		mem_ctrl_.req->source = device_->io_out_a_bits_source;
@@ -259,8 +261,8 @@ void Processor::attach_ram(Memory* mem) {
  * @param kernel_id
  * @return
  */
-int Processor::run(host_port_t* input_sig) {
-    return impl_->run(input_sig);
+int Processor::run(uint64_t root, host_port_t* input_sig) {
+    return impl_->run(root, input_sig);
 }
 std::queue<int> Processor::wait(uint64_t cycle) {
     return impl_->wait(cycle);
