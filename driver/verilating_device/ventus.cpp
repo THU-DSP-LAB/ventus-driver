@@ -189,33 +189,37 @@ extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint6
     return -1;
 
   uint32_t buffer_transfer_size = 65536; ///< 64 KB
-  uint64_t kernel_base_addr = GLOBALMEM_BASE;
-//   err = vt_dev_caps(device, VT_CAPS_KERNEL_BASE_ADDR, &kernel_base_addr);
-//   if (err != 0)
-//     return -1;
+  uint64_t kernel_base_addr = BUF_PARA_BASE;
 
   // allocate device buffer
   uint64_t dev_mem_addr;
-  // get buffer address
-//  auto buf_ptr = (uint8_t*)vt_host_ptr(buffer);
-
-  //
-  // upload content
-  //
 
   uint64_t offset = 0;
+	// 确定字符串可以被4整除
+
+	int numValues = size / 8; // 每个uint32_t值占据8个字符
+
+	// 创建uint32_t数组
+	uint32_t values[numValues];
+
+	// 将字符串转换为uint32_t数组
+	for (int i = 0; i < numValues; i++) {
+		std::string substring = (*(string*)content).substr(i * 8, 8); // 每次提取8个字符
+		unsigned int value = std::stoul(substring, nullptr, 16); // 转换为无符号整数
+		std::memcpy(values + i, &value, sizeof(uint32_t)); // 复制到数组中
+	}
   void * const buffer = malloc(buffer_transfer_size);
   while (offset < size) {
     auto chunk_size = std::min<uint64_t>(buffer_transfer_size, size - offset);
-    std::memcpy(buffer, (uint8_t*)content + offset, chunk_size);
+    std::memcpy(buffer, values + offset, chunk_size);
 
-	err = vt_buf_alloc(device, buffer_transfer_size, &dev_mem_addr, READ_ONLY, taskID, 0);
+	err = vt_buf_alloc(device, buffer_transfer_size, &dev_mem_addr, KERNEL_MEM, taskID, 0);
 	if (err != 0)
 	  return -1;
 
 	printf("***  Upload Kernel to 0x%0x: data=", kernel_base_addr + offset);
-    for (int i = 0, n = ((chunk_size+7)/8); i < n; ++i) {
-      printf("%08x", ((uint64_t*)((uint8_t*)content + offset))[n-1-i]);
+    for (int i = 0; i < chunk_size; ++i) {
+      printf("%08x", ((values + offset))[i]);
     }
     printf("\n");
 
@@ -232,24 +236,34 @@ extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint6
 }
 
 extern int vt_upload_kernel_file(vt_device_h device, const char* filename, int taskID) {
-  std::ifstream ifs(filename);
+
+//	return 0;
+
+	const char *pos = std::strchr(filename, '.');
+	char newname[100];
+	if (pos != nullptr) {
+		std::strncpy(newname, filename, pos - filename);
+		std::strcat(newname,".vmem");
+		std::size_t len = std::strlen(newname);
+		newname[len] = '\0';
+	}
+  std::ifstream ifs(newname, std::ios::binary);
   if (!ifs) {
-    std::cout << "error: " << filename << " not found" << std::endl;
+    std::cout << "error: " << newname << " not found" << std::endl;
     return -1;
   }
 
   // read file content
   ifs.seekg(0, ifs.end);
   auto size = ifs.tellg();
-  auto content = new char [size];
+  std::string content;
+  content.resize(size);
   ifs.seekg(0, ifs.beg);
-  ifs.read(content, size);
-
+  ifs.read(&content[0], size);
+  content.erase(std::remove(content.begin(), content.end(), '\n'), content.end());
   // upload
-  int err = vt_upload_kernel_bytes(device, content, size, taskID);
+  int err = vt_upload_kernel_bytes(device, &content, content.length(), taskID);
 
-  // release buffer
-  delete[] content;
 
   return err;
 }

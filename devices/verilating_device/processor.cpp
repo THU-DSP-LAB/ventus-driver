@@ -166,6 +166,24 @@ std::queue<int> Processor::Impl::finished_block(){
 
 void Processor::Impl::reset(){
 	device_->reset = 1;
+	device_->io_host_req_bits_host_wg_id = 0;
+	device_->io_host_req_bits_host_num_wf = 0;
+	device_->io_host_req_bits_host_wf_size = 0;
+	device_->io_host_req_bits_host_kernel_size_3d_0 = 0;
+	device_->io_host_req_bits_host_kernel_size_3d_1 = 0;
+	device_->io_host_req_bits_host_kernel_size_3d_2 = 0;
+	device_->io_host_req_bits_host_vgpr_size_total =  0;
+	device_->io_host_req_bits_host_sgpr_size_total =  0;
+	device_->io_host_req_bits_host_gds_size_total = 0;
+	device_->io_host_req_bits_host_vgpr_size_per_wf = 0;
+	device_->io_host_req_bits_host_sgpr_size_per_wf = 0;
+	device_->io_host_req_bits_host_start_pc = 0;
+	device_->io_host_req_bits_host_pds_baseaddr = 0;
+	device_->io_host_req_bits_host_csr_knl = 0;
+	device_->io_host_req_bits_host_lds_size_total = 0;
+	device_->io_host_req_bits_host_gds_baseaddr = 0;
+	device_->io_host_req_valid = 1;
+	device_->io_host_rsp_ready = 1;
 	mem_ctrl_.controller_reset();
 	for(int i = 0; i < RESET_DELAY; i++){
 		mem_ctrl_.controller_reset();
@@ -199,14 +217,14 @@ void Processor::Impl::tick(){
 void Processor::Impl::get_ram_bits_port() {
 	/// out_a signals, update at high voltage
 	if(device_->clock) {
-		mem_ctrl_.req->address = ram_.addrConvert(root_, device_->io_out_a_bits_address);
+		mem_ctrl_.req->address = ram_ ? ram_->addrConvert(root_, device_->io_out_a_bits_address) : device_->io_out_a_bits_address;
 		mem_ctrl_.req->opcode = device_->io_out_a_bits_opcode;
 		mem_ctrl_.req->size = device_->io_out_a_bits_opcode;
 		mem_ctrl_.req->source = device_->io_out_a_bits_source;
 		mem_ctrl_.req->mask = device_->io_out_a_bits_mask;
 //		if(mem_ctrl_.req->data == nullptr)
 //			mem_ctrl_.req->data = new uint64_t;
-		for (int i = 0; i < NUM_THREAD/2; ++i) {
+		for (int i = 0; i < NUM_THREAD; ++i) {
 			mem_ctrl_.req->data[i] = device_->io_out_a_bits_data[i];
 		}
 		mem_ctrl_.req->valid = device_->io_out_a_valid;
@@ -220,7 +238,7 @@ void Processor::Impl::get_ram_bits_port() {
 //		if(mem_ctrl_.rsp->data == nullptr) {
 //			mem_ctrl_.rsp->data = new uint64_t;
 //		}
-		for (int i = 0; i < NUM_THREAD/2; ++i) {
+		for (int i = 0; i < NUM_THREAD; ++i) {
 			device_->io_out_d_bits_data[i] = mem_ctrl_.rsp->data[i];
 		}
 		device_->io_out_d_valid = mem_ctrl_.rsp->valid;

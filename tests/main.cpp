@@ -23,7 +23,7 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 
-const char* kernel_file = "kernel.bin";
+const char* kernel_file = "object.vmem";
 int test = 0;
 uint32_t count = 0;
 int default_taskID = 0;
@@ -358,31 +358,27 @@ int main(int argc, char *argv[]) {
   void* metadata;
 
     vt_start(device,metadata, 0);
-/*  if (1 == test || -1 == test) {
+  if (1 == test || -1 == test) {
 //      vt_mem_free(device, 0, default_taskID);
       create_test_kernel_bin(default_taskID, 0x0badf00d40ff40ff);
     // upload program
     /// @note 写到了vt_device的成员ram_里
     std::cout << "upload program" << std::endl;  
     RT_CHECK(vt_upload_kernel_file(device, kernel_file, default_taskID));
-    {
-        RT_CHECK(vt_copy_to_dev(staging_buf, kernel_arg.src_addr, buf_size, default_taskID));
-        RT_CHECK(vt_copy_to_dev(staging_buf, kernel_arg.src_addr, 24, default_taskID));
-    }
     // upload kernel argument
     /// @note 指定一块上下文的内存空间，地址指针为结构体staging_buf，其中包括了结果要保存的内存地址，
     /// GPU的运行结果会保存在这个指针指向的地址，然后copy回主机的内存中
-    std::cout << "upload kernel argument" << std::endl;
-    {
-      auto buf_ptr = (void*)vt_host_ptr(staging_buf);
-      memcpy(buf_ptr, &kernel_arg, sizeof(kernel_arg_t));
-      RT_CHECK(vt_copy_to_dev(staging_buf, BUF_PARA_BASE, sizeof(kernel_arg_t), default_taskID));
-    }
+//    std::cout << "upload kernel argument" << std::endl;
+//    {
+//      auto buf_ptr = (void*)vt_host_ptr(staging_buf);
+//      memcpy(buf_ptr, &kernel_arg, sizeof(kernel_arg_t));
+//      RT_CHECK(vt_copy_to_dev(staging_buf, BUF_PARA_BASE, sizeof(kernel_arg_t), default_taskID));
+//    }
 
 
-    std::cout << "run kernel test" << std::endl;
-    RT_CHECK(run_kernel_test(kernel_arg, buf_size, num_points, default_taskID));
-  }*/
+//    std::cout << "run kernel test" << std::endl;
+//    RT_CHECK(run_kernel_test(kernel_arg, buf_size, num_points, default_taskID));
+  }
 
   // cleanup
   std::cout << "cleanup" << std::endl;  
