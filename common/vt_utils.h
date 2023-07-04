@@ -15,8 +15,7 @@
 #define PCOUT_INFO
 #endif
 
-#define INSTSIZE64
-#ifdef INSTSIZE64
+#if INSTSIZE == 64
 typedef uint64_t inst_len;
 #else
 typedef uint32_t inst_len;
