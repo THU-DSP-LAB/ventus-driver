@@ -17,7 +17,7 @@
  */
 #include "processor.h"
 #include "vt_utils.h"
-#include "verilating_device/vt_config.h"
+#include "vt_config.h"
 #include <future>
 #include <list>
 #include <map>

@@ -41,7 +41,7 @@ public:
 
     void attach_ram(Memory* ram);
     int start(const host_port_t* input_sig);
-    int run(host_port_t* input_sig);
+    int run(uint64_t root, host_port_t* input_sig);
     std::queue<int> wait(uint64_t cycle);
 private:
 
@@ -59,7 +59,7 @@ public:
 	/// 根据输入的GPGPU硬件接口信号，为verilator对象的接口赋值
 	/// \param input_sig 硬件接口的结构体
 	/// \return 执行完成则返回0
-    int run(host_port_t* input_sig);
+    int run(uint64_t root, host_port_t* input_sig);
 	/// 等待特定个周期
 	/// \param cycle 输入
 	/// \return 以 queue 形式返回已经执行完成的block id
@@ -80,6 +80,7 @@ private:
 #endif
 #ifdef DEBUG_VIRTUAL_ADDR
 		VGPGPU_top *device_;
+        uint64_t root_;
 #endif
 
 #ifdef DEBUG_TRACE

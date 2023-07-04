@@ -7,13 +7,13 @@ struct TLBundleA{ // req
     uint8_t opcode;
     uint32_t size;
     uint32_t source;
-    uint64_t address;
+    uint32_t address;
     uint32_t mask;
     uint8_t ready; // controller -> gpu, output
     uint8_t valid; // gpu -> controller, input
-    uint64_t *data;
+    uint32_t *data;
     TLBundleA(int n){
-        data = new uint64_t[n];
+        data = new uint32_t[n];
     }
     ~TLBundleA(){
         delete [] data;
@@ -26,9 +26,9 @@ struct TLBundleD{ // rsp
     uint32_t source;
     uint8_t ready; // gpu -> controller, input
     uint8_t valid; // controller -> gpu, output
-    uint64_t *data;
+    uint32_t *data;
     TLBundleD(int n){
-        data = new uint64_t[n];
+        data = new uint32_t[n];
     }
     ~TLBundleD(){
         delete [] data;
@@ -39,13 +39,13 @@ class Controller{
 public:
     TLBundleA *req;
     TLBundleD *rsp;
-    uint64_t *data;
-    int default_delay = 3;
+    uint32_t *data;
+    int default_delay = 0;
     Controller(uint32_t num_thread){
         req = new TLBundleA(2);
         rsp = new TLBundleD(2);
         num_ = num_thread;
-        data = new uint64_t[num_thread];
+        data = new uint32_t[num_thread];
     }
     ~Controller(){
         delete req;
@@ -67,6 +67,7 @@ public:
 
         time_remain_ = 0;
         rw_ = 0;
+		in_rsp_ = 0;
     }
 
     void controller_eval(uint8_t clk, Memory *mem){
@@ -86,23 +87,30 @@ public:
 			rsp->valid = 1;
 		}
 //		int rsp_valid_last_cycle_;
-        if(rw_ != 0){ // response
-            if(rsp->ready && rsp->valid){
-                rsp->size = size_;
-                rsp->source = source_;
-                rsp->opcode = rw_;
-                if(rw_ == 4) // read
-                    mem->readWordsPhysical<uint64_t>(addr_, num_, rsp->data);
-                if(rw_ == 1) // write
-                    mem->writeWordsPhysical<uint64_t>(addr_, num_, data, &mask_);
-                rw_ = 0;
-                rsp_valid_ = 1;
-                req_ready_ = 1;
-            }
-            rsp_valid_ = 1;
-            req_ready_ = 0;
-        }
-        else{ // request
+         // response
+		if(in_rsp_) {
+			if (rsp->ready && rsp->valid) {
+				rsp->size = size_;
+				rsp->source = source_;
+				rsp->opcode = 0;
+				if (rw_ == 4) {
+					rsp->opcode = 1;
+					mem->readWordsPhysical<uint32_t>(addr_, num_, rsp->data);
+					in_rsp_ = 0;
+				}// read
+				if (rw_ == 0) {
+					rsp->opcode = 0;
+					mem->writeWordsPhysical<uint32_t>(addr_, num_, data, &mask_);
+					in_rsp_ = 0;
+				}// write
+				rw_ = 0;
+				rsp_valid_ = 1;
+				req_ready_ = 1;
+			}
+//			rsp_valid_ = 1;
+//			req_ready_ = 0;
+		}
+		else { // request
             rsp_valid_ = 0;
             req_ready_ = 1;
             if(req->valid && req->ready){
@@ -111,13 +119,14 @@ public:
                 size_ = req->size;
                 source_ = req->source;
                 mask_ = req->mask;
-                if(rw_ == 1){
+				in_rsp_ = 1;
+                if(rw_ == 0){
                     for (auto i = 0; i < num_; i++)
                         data[i] = req->data[i];
                 }
                 time_remain_ = default_delay;
-                rsp_valid_ = 0;
-                req_ready_ = 0;
+//                rsp_valid_ = 0;
+//                req_ready_ = 0;
             }
 
         }
@@ -125,7 +134,7 @@ public:
         req->ready = req_ready_;
     }
 private:
-    uint32_t time_remain_;
+    uint32_t time_remain_, in_rsp_;
     uint8_t rw_, num_;
     uint8_t req_valid_, rsp_ready_; // i
     uint8_t req_ready_, rsp_valid_; // o

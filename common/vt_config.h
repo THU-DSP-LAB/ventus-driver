@@ -35,3 +35,7 @@
 #define NUM_CTA           2
 #define NUM_WARP          4
 #define THREAD_PER_WARP   8
+
+// define instruction length of ventus
+#define INSTSIZE 32
+

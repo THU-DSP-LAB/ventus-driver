@@ -32,10 +32,12 @@ int vt_device::delete_device_mem(int taskID){
 int vt_device::alloc_local_mem(uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID) {
     if(size <= 0 || vaddr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
-#ifndef DEBUG_VIRTUAL_ADDR
+#ifdef DEBUG_VIRTUAL_ADDR
     int ret0 = addrManager_.allocMemory(taskID, kernelID, vaddr, size, BUF_TYPE);
     auto it = contextList_.find(taskID);
     int ret1 = it->second.ram.allocateMemory(it->second.root, *vaddr, size);
+	PCOUT_INFO << "allocating memory at vaddr of 0x" <<hex << *vaddr << ", associated paddr of 0x" << ret1
+			   <<", size of "<<dec<<size << "bytes"<< endl;
     return ret0 || !ret1;
 #else
 	/// 这里addrManager会分配一个虚拟地址addr,ram根据这个虚拟地址分配一个物理地址vaddr，
@@ -60,10 +62,13 @@ int vt_device::free_local_mem(uint64_t size, uint64_t *vaddr, uint64_t taskID, u
         return -1;
     auto it = contextList_.find(taskID);
 	uint64_t *paddr = new uint64_t;
+	*paddr = *vaddr;
+#ifndef DEBUG_VIRTUAL_ADDR
 	addrManager_.findVaByPa(kernelID,taskID,paddr,vaddr);
+#endif
     int ret1 = it->second.ram.releaseMemory(it->second.root, *paddr);
 	delete paddr;
-#ifndef DEBUG_VIRTUAL_ADDR
+#ifdef DEBUG_VIRTUAL_ADDR
     int ret0 = addrManager_.releaseMemory(taskID, kernelID, vaddr, size);
     return ret0 || ret1;
 #else
@@ -75,7 +80,7 @@ int vt_device::upload(uint64_t dev_vaddr,const void *src_addr, uint64_t size, ui
     if(size <= 0 || src_addr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
     auto it = contextList_.find(taskID);
-#ifndef DEBUG_VIRTUAL_ADDR
+#ifdef DEBUG_VIRTUAL_ADDR
     return it->second.ram.writeDataVirtual(it->second.root, dev_vaddr, size, src_addr);
 #else
     return it->second.ram.writeDataPhysical(dev_vaddr, size, src_addr);
@@ -88,7 +93,7 @@ int vt_device::download(uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint6
     if(size <= 0 || dst_addr == nullptr || contextList_.find(taskID) == contextList_.end())
         return -1;
     auto it = contextList_.find(taskID);
-#ifndef DEBUG_VIRTUAL_ADDR
+#ifdef DEBUG_VIRTUAL_ADDR
     return it->second.ram.readDataVirtual(it->second.root, dev_vaddr, size, dst_addr);
 #else
     return it->second.ram.readDataPhysical(dev_vaddr, size, dst_addr);
@@ -124,7 +129,7 @@ int vt_device::start(int taskID, void* metaData){
     devicePort->host_req_gds_size_total = 0;
     devicePort->host_req_vgpr_size_per_wf = inputData->vgprUsage;
     devicePort->host_req_sgpr_size_per_wf = inputData->sgprUsage;
-    devicePort->host_req_start_pc = 0x2000a000;
+    devicePort->host_req_start_pc = 0x80000000;
     devicePort->host_req_pds_baseaddr = inputData->pdsBaseAddr;
     devicePort->host_req_csr_knl = inputData->metaDataBaseAddr;
     devicePort->host_req_lds_size_total = inputData->ldsSize;
@@ -168,7 +173,7 @@ int vt_device::start(int taskID, void* metaData){
 				devicePort->host_req_gds_baseaddr = 0x00000000;
 		#endif
 
-		processor_.run(devicePort);
+		processor_.run(contextList_.find(taskID)->second.root, devicePort);
         //更新contextList_
         map<int, _state>firedBlk;
         firedBlk.emplace((int)(devicePort->host_req_wg_id), UNFINISH);
@@ -349,6 +354,13 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
 				PCOUT_ERROR << "buffer size too large, error!" << endl;
 				return -1;
 			}
+		case KERNEL_MEM: if(size < GLOBALMEM_SIZE/2) {
+				*vaddr = BUF_PARA_BASE;
+				break;
+			} else {
+				PCOUT_ERROR << "buffer size too large, error!" << endl;
+				return -1;
+			}
 		default: break;
 	}
     if(contextMemory_.at(contextID) == nullptr) {
@@ -363,14 +375,6 @@ int addr_manager::allocMemory(uint64_t contextID, uint64_t kernelID, uint64_t *v
 					PCOUT_ERROR << "allocating virtual addr failed !" << endl;
 				}
             }
-//            break;
-//        }
-//        ++curContextIt;
-//    }
-//    if(curContextIt == contextList_.end()){
-//        PCOUT_ERROR << "Context of ID" << contextID <<" has not created, can't allocate memory!" << endl;
-//        return -1;
-//    }
     return 0;
 }
 
@@ -444,7 +448,7 @@ int addr_manager::allocVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size
 
 		case READ_WRITE:
 			if((*rootItem)->vaddr == RODATA_BASE) {/// 如果第一个元素是只读类型的地址，则遍历到RW_BASE,如果没有RW的地址，则要分配的地址为RW_BASE
-				while((*rootItem)->vaddr < RWDATA_BASE && (*rootItem)->succContextItem != nullptr) {
+				while((*rootItem)->vaddr < RWDATA_BASE ) {
 					if ((*rootItem)->succContextItem == nullptr) {
 						*vaddr = RWDATA_BASE;
 						return 0;
@@ -463,6 +467,32 @@ int addr_manager::allocVaddr(addrItem **rootItem, uint64_t *vaddr, uint64_t size
 					*vaddr = aligned_size((*rootItem)->vaddr + (*rootItem)->size, PAGESIZE);
 			}
 			if ((*rootItem)->succContextItem == nullptr && (*vaddr + size > BUF_PARA_BASE)) {
+				PCOUT_ERROR << "memory needs to allocate of size of 0x" << hex << size << dec
+							<< "failed! No enough space!" << endl;
+				return -1;
+			}
+			break;
+		case KERNEL_MEM:
+			if((*rootItem)->vaddr == RODATA_BASE || (*rootItem)->vaddr == RWDATA_BASE) {/// 如果第一个元素是只读类型的地址，则遍历到RW_BASE,如果没有RW的地址，则要分配的地址为RW_BASE
+				while((*rootItem)->vaddr < BUF_PARA_BASE ) {
+					if ((*rootItem)->succContextItem == nullptr) {
+						*vaddr = BUF_PARA_BASE;
+						return 0;
+					}
+					*rootItem = (*rootItem)->succContextItem;
+				}
+			}
+			*vaddr = aligned_size((*rootItem)->vaddr + (*rootItem)->size, PAGESIZE);
+			while ((*rootItem)->vaddr < BUF_PARA_BASE+GLOBALMEM_SIZE/2 && (*rootItem)->succContextItem != nullptr) {
+//				*vaddr = (*rootItem)->vaddr + (*rootItem)->size;
+				if (*vaddr + size <= (*rootItem)->succContextItem->vaddr) {
+					break;/// 该地址符合条件，跳出循环
+				}
+				*rootItem = (*rootItem)->succContextItem;
+//				if((*rootItem)->succContextItem == nullptr)
+				*vaddr = aligned_size((*rootItem)->vaddr + (*rootItem)->size, PAGESIZE);
+			}
+			if ((*rootItem)->succContextItem == nullptr && (*vaddr + size > BUF_PARA_BASE+GLOBALMEM_SIZE/2)) {
 				PCOUT_ERROR << "memory needs to allocate of size of 0x" << hex << size << dec
 							<< "failed! No enough space!" << endl;
 				return -1;
