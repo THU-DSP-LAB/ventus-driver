@@ -33,7 +33,7 @@ endif()
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/test.cpp")
     set(CODING_TEST test)
-    add_executable(${CODING_TEST} test.cpp)
+    add_executable(${CODING_TEST} test.cpp driver/fpga/ventus.c)
 endif()
 
 option(ENABLE_INSTALL "if install driver library to install dir" OFF)
@@ -42,6 +42,7 @@ set(DRIVER_LIB_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/lib/)
 message(STATUS "DRIVER_LIB_INSTALL_DIR:" ${DRIVER_LIB_INSTALL_DIR} "\n")
 
 option(ENABLE_VERILATOR "if add verilated rtl device" OFF)
+option(ENABLE_FPGA "if compile code parsing file for FPGA" ON)
 
 add_subdirectory(devices)
 add_subdirectory(driver)
