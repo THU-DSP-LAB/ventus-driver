@@ -5,11 +5,11 @@
 #define BUF_PARA_BASE   0x80000000 ///< buffer的参数的数量和每个buffer的大小，第一个放参数数量，第二个放第一个参数的大小
 
 #define LOCALMEM_BASE   0x10000000
- 
+
 #define BUFSIZE         0x10000000
 
 #define READ_WRITE 0
 #define READ_ONLY 1
 #define KERNEL_MEM 2
 
-#define PAGESIZE 		1ull << 12ull  ///< 4KB
+#define PAGESIZE        1ull << 12ull  ///< 4KB
