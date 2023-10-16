@@ -56,6 +56,13 @@ extern int vt_buf_free(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint
 
 }
 
+extern int vt_one_buf_free(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID) {
+    if(hdevice == nullptr)
+        return -1;
+    auto device = ((spike_device*) hdevice);
+    return device->free_local_mem(*vaddr);
+}
+
 /**
  * @brief  为设备分配内存，返回根页表的地址
  * @param  hdevice           
