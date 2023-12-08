@@ -57,7 +57,7 @@ extern int vt_buf_free(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint
 }
 
 extern int vt_one_buf_free(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID) {
-    if(hdevice == nullptr)
+    if(size <= 0 || hdevice == nullptr)
         return -1;
     auto device = ((spike_device*) hdevice);
     return device->free_local_mem(*vaddr);
