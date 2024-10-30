@@ -236,20 +236,9 @@ extern int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint6
 }
 
 extern int vt_upload_kernel_file(vt_device_h device, const char* filename, int taskID) {
-
-//	return 0;
-
-	const char *pos = std::strchr(filename, '.');
-	char newname[100];
-	if (pos != nullptr) {
-		std::strncpy(newname, filename, pos - filename);
-		std::strcat(newname,".vmem");
-		std::size_t len = std::strlen(newname);
-		newname[len] = '\0';
-	}
-  std::ifstream ifs(newname, std::ios::binary);
+  std::ifstream ifs(filename, std::ios::binary);
   if (!ifs) {
-    std::cout << "error: " << newname << " not found" << std::endl;
+    std::cout << "error: " << filename << " not found" << std::endl;
     return -1;
   }
 
