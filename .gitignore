@@ -10,3 +10,5 @@ html/
 cmake-build*
 build
 obj_dir*
+compile_commands.json
+.cache
