@@ -1,7 +1,7 @@
-set(PROJECT cyclesim_driver)
+set(PROJECT rtlsim_driver)
 project(${PROJECT})
 
-message("env CYCLESIM_DIR is: $ENV{CYCLESIM_DIR}")
+message("env RTLSIM_DIR is: $ENV{RTLSIM_DIR}")
 
 include_directories(${CMAKE_SOURCE_DIR}/../../include)
 include_directories(${CMAKE_SOURCE_DIR}/../../common)
@@ -9,8 +9,8 @@ include_directories(${CMAKE_SOURCE_DIR}/../../common)
 file(GLOB_RECURSE SRCS ./ventus.cpp)
 
 add_library(${PROJECT} SHARED ${SRCS})
-target_link_directories(${PROJECT} PRIVATE $ENV{CYCLESIM_DIR}/build/linux/x86_64/release)
-target_link_libraries(${PROJECT} PRIVATE VentusCycleSim)
+target_link_directories(${PROJECT} PRIVATE $ENV{RTLSIM_DIR}/build/libVentusRTL/release)
+target_link_libraries(${PROJECT} PRIVATE VentusRTL)
 target_link_libraries(${PROJECT} PRIVATE driver_common_utils)
 target_link_libraries(${PROJECT} PRIVATE spdlog)
 target_link_libraries(${PROJECT} PRIVATE fmt)

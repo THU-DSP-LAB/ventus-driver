@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(PROJECT ventus_driver)
 project(${PROJECT})
 
@@ -45,6 +48,7 @@ option(ENABLE_VERILATOR "if add verilated rtl device" OFF)
 
 add_subdirectory(devices)
 add_subdirectory(driver)
+add_subdirectory(common)
 if(ENABLE_VERILATOR)
 add_subdirectory(tests)
 endif()
