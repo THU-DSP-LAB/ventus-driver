@@ -77,7 +77,7 @@ extern int vt_buf_alloc(
         "vt_buf_alloc: vaddr_recommand={:x}, vaddr_allocated={:x}, size={}, taskID={}",
         *vaddr, vaddr_allocated, size, taskID
     );
-    alloc_vaddr += (size > 0x2000) ? size : 0x2000;
+    alloc_vaddr += (size > 0x1000) ? size : 0x1000;
     *vaddr = vaddr_allocated;
     if (*vaddr == 0) return -1;
     return 0;
@@ -136,6 +136,10 @@ extern int vt_copy_to_dev(
     uint64_t kernelID
 ) {
     if (hdevice == nullptr) return -1;
+    if(dev_vaddr >= 0x70000000 && dev_vaddr < 0x80000000) {
+        logger->warn("vt_copy_to_dev: dev_vaddr={:x} in LDS space, ignored", dev_vaddr);
+        return 0;
+    }
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     logger->debug(
         "vt_copy_to_dev: dev_vaddr={:x}, size={}, taskID={}, kernelID={}",
@@ -163,9 +167,11 @@ extern int vt_start(vt_device_h hdevice, void *mtd_raw, uint64_t taskID) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     auto mtd_driver = static_cast<driver_metadata_t *>(mtd_raw);
+    static uint32_t kernel_cnt = 0;
     ventus_kernel_metadata_t mtd_sim{
         .name = "UnknownKernelName",
-        .kernel_id = mtd_driver->kernel_id,
+        // .kernel_id = mtd_driver->kernel_id,
+        .kernel_id = kernel_cnt++,
         .data = nullptr,
         .startaddr = 0x80000000,
         .kernel_size =

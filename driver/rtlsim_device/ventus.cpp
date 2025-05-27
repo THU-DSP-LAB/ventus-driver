@@ -9,10 +9,12 @@
 #include "loadelf.hpp"
 #include "ventus_rtlsim.h"
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <stdlib.h>
+#include <sys/types.h>
 
 typedef struct driver_metadata_t {
     uint64_t kernel_id;
@@ -35,13 +37,25 @@ static uint64_t alloc_vaddr = 0x90000000;
 /// open the device and connect to it
 extern int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
+
+    auto env_waveform_begin= std::getenv("RTLSIM_WAVEFORM_BEGIN");
+    auto env_waveform_end= std::getenv("RTLSIM_WAVEFORM_END");
+    bool waveform_enable = false;
+    uint64_t waveform_begin = 0;
+    uint64_t waveform_end = 0;
+    if(env_waveform_begin || env_waveform_end) {
+        waveform_begin = static_cast<uint64_t>(env_waveform_begin ? std::stoll(env_waveform_begin) : -1);
+        waveform_end = static_cast<uint64_t>(env_waveform_end ? std::stoll(env_waveform_end) : 0);
+        waveform_enable = waveform_end > waveform_begin;
+    }
+
     ventus_rtlsim_config_t config;
     ventus_rtlsim_get_default_config(&config);
     config.sim_time_max = ~0ull;
     config.pmem.auto_alloc = true;
-    config.waveform.enable = true;
-    config.waveform.time_begin = 0;
-    config.waveform.time_end = -1;
+    config.waveform.enable = waveform_enable;
+    config.waveform.time_begin = waveform_begin;
+    config.waveform.time_end = waveform_end;
     config.waveform.filename = "waveform.fst";
     config.snapshot.enable = false;
     config.log.console.enable = true;
@@ -69,19 +83,25 @@ extern int vt_dev_caps(vt_device_h *hdevice, host_port_t *input_sig) {
 }
 
 extern int vt_buf_alloc(
-    vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID,
+    vt_device_h hdevice, const uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID,
     uint64_t kernelID
 ) {
     // TODO: RTLSIM does not support Virtual Memory yet
     if (size <= 0 || hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
+    size_t pgcnt = (size + 4095) / 4096;
     uint64_t vaddr_allocated = alloc_vaddr;
-    ventus_rtlsim_pmem_page_alloc(device, alloc_vaddr);
+    for (size_t pg = 0; pg < pgcnt; pg++) {
+        if (ventus_rtlsim_pmem_page_alloc(device, vaddr_allocated + pg * 4096) == false) {
+            logger->error("vt_buf_alloc: page alloc failed");
+            return -1;
+        }
+    }
     logger->debug(
         "vt_buf_alloc: vaddr_recommand={:x}, vaddr_allocated={:x}, size={}, taskID={}", *vaddr,
         vaddr_allocated, size, taskID
     );
-    alloc_vaddr += (size + 0xfff) & ~0xfff;
+    alloc_vaddr += pgcnt * 4096;
     *vaddr = vaddr_allocated;
     if (*vaddr == 0) return -1;
     return 0;
@@ -118,7 +138,7 @@ extern int vt_root_mem_alloc(vt_device_h hdevice, int taskID) {
     // if (ptroot == 0) return -1;
     // logger->debug("vt_root_mem_alloc: taskID={}, ptroot={:x}", taskID, ptroot);
     // ptroots[taskID] = ptroot;
-    if(taskID == 0) {
+    if (taskID == 0) {
         logger->error("RTLSIM_device does not support VMEM yet, taskID must be 0");
     }
     return 0;
@@ -159,8 +179,8 @@ extern int vt_copy_from_dev(
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     logger->debug(
-        "vt_copy_from_dev: dev_addr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size,
-        taskID, kernelID
+        "vt_copy_from_dev: dev_addr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size, taskID,
+        kernelID
     );
     ventus_rtlsim_pmemcpy_d2h(device, dst_addr, dev_vaddr, size);
     return 0;
@@ -190,6 +210,15 @@ extern int vt_start(vt_device_h hdevice, void *mtd_raw, uint64_t taskID) {
         .buffer_size = nullptr,
         .buffer_allocsize = nullptr,
     };
+    logger->debug(
+        "kernel metadata: kernel_id={}, kernel_size=[{}, {}, {}], wf_size={}, wg_size={}, "
+        "metaDataBaseAddr={:x}, ldsSize={}, pdsSize={}, sgprUsage={}, vgprUsage={}, "
+        "pdsBaseAddr={:x}",
+        mtd_driver->kernel_id, mtd_driver->kernel_size[0], mtd_driver->kernel_size[1],
+        mtd_driver->kernel_size[2], mtd_driver->wf_size, mtd_driver->wg_size,
+        mtd_driver->metaDataBaseAddr, mtd_driver->ldsSize, mtd_driver->pdsSize,
+        mtd_driver->sgprUsage, mtd_driver->vgprUsage, mtd_driver->pdsBaseAddr
+    );
     ventus_rtlsim_add_kernel(device, &mtd_sim, nullptr);
     return 0;
 }
@@ -204,7 +233,7 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     // TODO: temp
     // it seems that vt_dev_close() is not called by POCL
     // we call it here to make waveform output sucessful
-    vt_dev_close(hdevice);
+    // vt_dev_close(hdevice);
     return 0;
 }
 
@@ -231,9 +260,7 @@ extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int 
         logger->debug("vt_upload_kernel_file: addr={:x}, size={}", vaddr, size);
         ventus_rtlsim_pmemcpy_h2d(device, vaddr, block->data.data(), block->data.size());
         std::vector<uint8_t> zeros(size - block->data.size(), 0);
-        ventus_rtlsim_pmemcpy_h2d(
-            device, vaddr + block->data.size(), zeros.data(), zeros.size()
-        );
+        ventus_rtlsim_pmemcpy_h2d(device, vaddr + block->data.size(), zeros.data(), zeros.size());
     }
 
     return 0;

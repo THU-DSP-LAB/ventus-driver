@@ -9,7 +9,7 @@ include_directories(${CMAKE_SOURCE_DIR}/../../common)
 file(GLOB_RECURSE SRCS ./ventus.cpp)
 
 add_library(${PROJECT} SHARED ${SRCS})
-target_link_directories(${PROJECT} PRIVATE $ENV{CYCLESIM_DIR}/build/linux/x86_64/release)
+target_link_directories(${PROJECT} PRIVATE $ENV{CYCLESIM_DIR}/build/)
 target_link_libraries(${PROJECT} PRIVATE VentusCycleSim)
 target_link_libraries(${PROJECT} PRIVATE driver_common_utils)
 target_link_libraries(${PROJECT} PRIVATE spdlog)
