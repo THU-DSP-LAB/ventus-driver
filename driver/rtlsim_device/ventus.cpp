@@ -230,6 +230,10 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     while (!ventus_rtlsim_is_idle(device) && ventus_rtlsim_get_time(device) < timeout_ns) {
         ventus_rtlsim_step(device);
     }
+    for(int i = 0; i < 5000; i++) {
+        // TODO: RTL does not provide a way to check if L2 cache flush is done
+        ventus_rtlsim_step(device);
+    }
     // TODO: temp
     // it seems that vt_dev_close() is not called by POCL
     // we call it here to make waveform output sucessful
