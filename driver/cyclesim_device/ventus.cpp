@@ -5,16 +5,16 @@
  * 1. `/include/ventus.h`中声明的函数
  */
 
+#include "ventus.h"
+#include "loadelf.hpp"
+#include "ventus_cyclesim.h"
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 #include <stdlib.h>
 #include <vector>
-#include "loadelf.hpp"
-#include "ventus.h"
-#include "ventus_cyclesim.h"
-#include <spdlog/spdlog.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 
 typedef struct driver_metadata_t {
     uint64_t kernel_id;
@@ -44,12 +44,12 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
     logger->debug("vt_dev_open : hello world from ventus.cpp (cyclesim device)");
-    
+
     // TODO: temp
     // POCL should call vt_root_mem_alloc() to create virtual memory space before any buf_alloc
     // but currently it seems not. So we create a default root page table here.
     uint64_t ptroot = ventus_cyclesim_vmem_create(device);
-    if(ptroot == 0) return -1;
+    if (ptroot == 0) return -1;
     ptroots[0] = ptroot;
     return 0;
 }
@@ -65,6 +65,10 @@ extern int vt_dev_caps(vt_device_h *hdevice, host_port_t *input_sig) {
     // ??? TODO
     return 0;
 }
+int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *value) {
+    // TODO: Not implemented yet
+    return 0;
+}
 
 extern int vt_buf_alloc(
     vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID,
@@ -72,10 +76,11 @@ extern int vt_buf_alloc(
 ) {
     if (size <= 0 || hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
-    uint64_t vaddr_allocated = ventus_cyclesim_vmem_alloc(device, ptroots[taskID], alloc_vaddr, size);
+    uint64_t vaddr_allocated =
+        ventus_cyclesim_vmem_alloc(device, ptroots[taskID], alloc_vaddr, size);
     logger->debug(
-        "vt_buf_alloc: vaddr_recommand={:x}, vaddr_allocated={:x}, size={}, taskID={}",
-        *vaddr, vaddr_allocated, size, taskID
+        "vt_buf_alloc: vaddr_recommand={:x}, vaddr_allocated={:x}, size={}, taskID={}", *vaddr,
+        vaddr_allocated, size, taskID
     );
     alloc_vaddr += (size > 0x1000) ? size : 0x1000;
     *vaddr = vaddr_allocated;
@@ -136,14 +141,14 @@ extern int vt_copy_to_dev(
     uint64_t kernelID
 ) {
     if (hdevice == nullptr) return -1;
-    if(dev_vaddr >= 0x70000000 && dev_vaddr < 0x80000000) {
+    if (dev_vaddr >= 0x70000000 && dev_vaddr < 0x80000000) {
         logger->warn("vt_copy_to_dev: dev_vaddr={:x} in LDS space, ignored", dev_vaddr);
         return 0;
     }
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     logger->debug(
-        "vt_copy_to_dev: dev_vaddr={:x}, size={}, taskID={}, kernelID={}",
-        dev_vaddr, size, taskID, kernelID
+        "vt_copy_to_dev: dev_vaddr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size, taskID,
+        kernelID
     );
     ventus_cyclesim_vmemcpy_h2d(device, ptroots[taskID], dev_vaddr, src_addr, size);
     return 0;
@@ -156,8 +161,8 @@ extern int vt_copy_from_dev(
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     logger->debug(
-        "vt_copy_from_dev: dev_vaddr={:x}, size={}, taskID={}, kernelID={}",
-        dev_vaddr, size, taskID, kernelID
+        "vt_copy_from_dev: dev_vaddr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size,
+        taskID, kernelID
     );
     ventus_cyclesim_vmemcpy_d2h(device, ptroots[taskID], dst_addr, dev_vaddr, size);
     return 0;
@@ -242,3 +247,7 @@ extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int 
 
     return 0;
 }
+int vt_upload_kernel_bytes(vt_device_h device, const void *content, uint64_t size, int taskID) {
+    return 0;
+}
+int vt_dump_perf(vt_device_h device, FILE *stream) { return 0; }

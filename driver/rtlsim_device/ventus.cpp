@@ -38,13 +38,14 @@ static uint64_t alloc_vaddr = 0x90000000;
 extern int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
 
-    auto env_waveform_begin= std::getenv("RTLSIM_WAVEFORM_BEGIN");
-    auto env_waveform_end= std::getenv("RTLSIM_WAVEFORM_END");
+    auto env_waveform_begin = std::getenv("RTLSIM_WAVEFORM_BEGIN");
+    auto env_waveform_end = std::getenv("RTLSIM_WAVEFORM_END");
     bool waveform_enable = false;
     uint64_t waveform_begin = 0;
     uint64_t waveform_end = 0;
-    if(env_waveform_begin || env_waveform_end) {
-        waveform_begin = static_cast<uint64_t>(env_waveform_begin ? std::stoll(env_waveform_begin) : -1);
+    if (env_waveform_begin || env_waveform_end) {
+        waveform_begin =
+            static_cast<uint64_t>(env_waveform_begin ? std::stoll(env_waveform_begin) : -1);
         waveform_end = static_cast<uint64_t>(env_waveform_end ? std::stoll(env_waveform_end) : 0);
         waveform_enable = waveform_end > waveform_begin;
     }
@@ -79,6 +80,10 @@ extern int vt_dev_close(vt_device_h hdevice) {
 }
 extern int vt_dev_caps(vt_device_h *hdevice, host_port_t *input_sig) {
     // ??? TODO
+    return 0;
+}
+int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *value) {
+    // TODO: Not implemented yet
     return 0;
 }
 
@@ -230,7 +235,7 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     while (!ventus_rtlsim_is_idle(device) && ventus_rtlsim_get_time(device) < timeout_ns) {
         ventus_rtlsim_step(device);
     }
-    for(int i = 0; i < 5000; i++) {
+    for (int i = 0; i < 5000; i++) {
         // TODO: RTL does not provide a way to check if L2 cache flush is done
         ventus_rtlsim_step(device);
     }
@@ -269,3 +274,7 @@ extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int 
 
     return 0;
 }
+int vt_upload_kernel_bytes(vt_device_h device, const void *content, uint64_t size, int taskID) {
+    return 0;
+}
+int vt_dump_perf(vt_device_h device, FILE *stream) { return 0; }

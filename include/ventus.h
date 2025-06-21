@@ -55,7 +55,7 @@ int vt_dev_open(vt_device_h* hdevice);
 int vt_dev_close(vt_device_h hdevice);
 
 /// return device configurations
- int vt_dev_caps(vt_device_h* hdevice, uint64_t caps_id, uint64_t *value);
+int vt_dev_caps(vt_device_h* hdevice, uint64_t caps_id, uint64_t *value);
 
 /// @brief 【已实现】以任务为单位，在GPGPU设备上分配虚拟内存空间（创建根页表）
 /// @param hdevice 指向设备的指针
