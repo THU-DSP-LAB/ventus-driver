@@ -3,6 +3,7 @@ option(DRIVER_ENABLE_RTLSIM "Enable rtlsim device driver" OFF)
 option(DRIVER_ENABLE_AUTOSELECT "Enable auto select device driver" OFF)
 
 add_subdirectory(spike_device)
+set(DRIVER_DEFAULT "spike_driver")
 
 # If you enable these, it's assumed that backend libraries are already installed to ${VENTUS_INSTALL_PREFIX}/lib
 if(DRIVER_ENABLE_CYCLESIM)
@@ -13,4 +14,14 @@ if(DRIVER_ENABLE_RTLSIM)
 endif()
 if(DRIVER_ENABLE_AUTOSELECT)
     add_subdirectory(auto_select)
+    set(DRIVER_DEFAULT "auto_select_driver")
 endif()
+
+
+install(CODE "
+    file(CREATE_LINK
+        lib${DRIVER_DEFAULT}.so
+        ${CMAKE_INSTALL_PREFIX}/lib/libventus_driver.so
+        SYMBOLIC
+    )
+")
