@@ -52,10 +52,8 @@ vt_api_t load_backend() {
     vt_api_t api = {0}; // 初始化函数指针结构体
 
     // 读取环境变量 VENTUS_BACKEND，确定动态库名
-    std::string backend = std::getenv("VENTUS_BACKEND");
-    if (backend.empty()) {
-        backend = "spike"; // default
-    }
+    const char* backend_ = std::getenv("VENTUS_BACKEND");
+    std::string backend(backend_ ? backend_ : "spike");
     std::map<std::string, std::string> backend_map;
     backend_map["spike"] = "libspike_driver.so";
     backend_map["rtlsim"] = "librtlsim_driver.so";
