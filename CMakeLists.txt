@@ -10,8 +10,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wall")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wall")
 
-add_subdirectory(driver)
+add_subdirectory(dependencies/membox)
 add_subdirectory(common)
+add_subdirectory(driver)
 add_subdirectory(codetests)
 
 set(DRIVER_PUBLIC_HEADERS
