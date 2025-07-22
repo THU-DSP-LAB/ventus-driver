@@ -9,6 +9,7 @@
 #include "loadelf.hpp"
 #include "ventus_cyclesim.h"
 #include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -40,6 +41,7 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     ventus_cyclesim_config_t config;
     ventus_cyclesim_get_default_config(&config);
     config.sim_time_max = ~0ull;
+    config.waveform.enable = std::atoi(std::getenv("CYCLESIM_WAVEFORM")) != 0;
     auto device = ventus_cyclesim_init(&config);
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
