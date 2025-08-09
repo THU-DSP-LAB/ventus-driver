@@ -8,6 +8,7 @@
 #include "ventus.h"
 #include "loadelf.hpp"
 #include "ventus_cyclesim.h"
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <map>
@@ -15,6 +16,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <stdlib.h>
+#include <string>
 #include <vector>
 
 typedef struct driver_metadata_t {
@@ -35,13 +37,24 @@ static std::map<int, uint64_t> ptroots; // pagetable root physical address
 static std::shared_ptr<spdlog::logger> logger;
 static uint64_t alloc_vaddr = 0x90000000;
 
+static bool parse_bool(std::string str, bool default_val = false) {
+    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+    if (str == "true" || str == "1" || str == "yes" || str == "on") return true;
+    if (str == "false" || str == "0" || str == "no" || str == "off") return false;
+    return default_val;
+}
+static bool parse_bool(const char* str, bool default_val = false) {
+    if(str == nullptr) return default_val;
+    return parse_bool(std::string(str), default_val);
+}
+
 /// open the device and connect to it
 extern int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
     ventus_cyclesim_config_t config;
     ventus_cyclesim_get_default_config(&config);
     config.sim_time_max = ~0ull;
-    config.waveform.enable = std::atoi(std::getenv("CYCLESIM_WAVEFORM")) != 0;
+    config.waveform.enable = parse_bool(std::getenv("CYCLESIM_WAVEFORM_ENABLE"), false);
     auto device = ventus_cyclesim_init(&config);
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
