@@ -58,7 +58,8 @@ vt_api_t load_backend() {
     backend_map["spike"] = "libspike_driver.so";
     backend_map["rtlsim"] = "librtlsim_driver.so";
     backend_map["cyclesim"] = "libcyclesim_driver.so";
-
+    backend_map["gvm"] = "libgvm_driver.so";
+    
     std::string backend_soname;
     if (backend_map.find(backend) != backend_map.end()) {
         backend_soname = backend_map[backend];
