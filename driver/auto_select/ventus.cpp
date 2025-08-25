@@ -13,8 +13,18 @@
 #include <fmt/core.h>
 #include <fstream>
 #include <map>
+#include <nlohmann/json.hpp>
+#include <optional>
 #include <spdlog/spdlog.h>
 #include <string>
+
+// static void json_dump(std::string filename, nlohmann::json j);
+static int append_json_object(const std::string &filename, const nlohmann::json &new_obj);
+static std::string to_hex_string(uint32_t value) { return fmt::format("0x{:08X}", value); }
+extern "C" int __vt_get_last_copy_to_dev_addr(uint64_t *addr);
+extern "C" void __vt_enable_dump_json_copy_to_dev(const char *filename);
+static uint64_t last_copy_to_dev_addr = 0;
+static std::optional<std::string> dump_copy_to_dev = std::nullopt;
 
 // 定义函数指针结构体，包含所有 API 的函数指针
 struct vt_api_t {
@@ -148,6 +158,12 @@ extern "C" int vt_dev_open(vt_device_h *hdevice) {
         loader.loaded = true;        // 标记为已加载
     }
     if (!loader.api.vt_dev_open) return -1;
+    const char *env_dump_result = std::getenv("VENTUS_DRIVER_DUMP_RESULT");
+    if (!dump_copy_to_dev && env_dump_result) {
+        dump_copy_to_dev = std::string{env_dump_result};
+        std::ofstream ofs(*dump_copy_to_dev, std::ios::trunc | std::ios::out);
+        ofs.close(); // 清空文件
+    }
     return loader.api.vt_dev_open(hdevice);
 }
 
@@ -206,7 +222,22 @@ extern "C" int vt_copy_from_dev(
     uint64_t kernelID
 ) {
     if (!loader.api.vt_copy_from_dev) return -1;
-    return loader.api.vt_copy_from_dev(hdevice, dev_vaddr, dst_addr, size, taskID, kernelID);
+    int result = loader.api.vt_copy_from_dev(hdevice, dev_vaddr, dst_addr, size, taskID, kernelID);
+    if (result == 0) {
+        last_copy_to_dev_addr = dev_vaddr;
+    }
+    if (dump_copy_to_dev) {
+        nlohmann::json j;
+        j["address"] = to_hex_string(dev_vaddr);
+        j["size"] = to_hex_string(size);
+        nlohmann::json addr_data;
+        for (size_t i = 0; i < (size + 3) / 4; i++) {
+            addr_data[to_hex_string(dev_vaddr + i * 4)] = to_hex_string(((uint32_t *)dst_addr)[i]);
+        }
+        j["data"] = addr_data;
+        append_json_object(*dump_copy_to_dev, j);
+    }
+    return result;
 }
 
 extern "C" int vt_start(vt_device_h hdevice, void *metaData, uint64_t taskID) {
@@ -239,4 +270,47 @@ extern "C" int vt_upload_kernel_file(vt_device_h device, const char *filename, i
 extern "C" int vt_dump_perf(vt_device_h device, FILE *stream) {
     if (!loader.api.vt_dump_perf) return -1;
     return loader.api.vt_dump_perf(device, stream);
+}
+
+extern "C" int __vt_get_last_copy_to_dev_addr(uint64_t *addr) {
+    *addr = last_copy_to_dev_addr;
+    return 0;
+}
+
+extern "C" void __vt_enable_dump_json_copy_to_dev(const char *filename) {
+    if (!filename) {
+        dump_copy_to_dev = std::nullopt;
+        return;
+    }
+    if (!dump_copy_to_dev || *dump_copy_to_dev != filename) {
+        dump_copy_to_dev = std::string{filename};
+        std::ofstream ofs(*dump_copy_to_dev, std::ios::trunc | std::ios::out);
+        ofs.close(); // 清空文件
+    }
+}
+
+static int append_json_object(const std::string &filename, const nlohmann::json &new_obj) {
+    nlohmann::json root;
+    std::ifstream ifs(filename);
+    if (ifs.is_open() && ifs.peek() != std::ifstream::traits_type::eof()) {
+        ifs >> root;
+        ifs.close();
+        if (!root.is_array()) {
+            SPDLOG_ERROR("Error: File is not a JSON array: {}", filename);
+            return 1;
+        }
+    } else {
+        root = nlohmann::json::array();
+    }
+
+    root.push_back(new_obj);
+
+    std::ofstream ofs(filename);
+    if (!ofs.is_open()) {
+        SPDLOG_ERROR("Unable to open json dump file: {}", filename);
+        return 1;
+    }
+    ofs << root.dump(4);
+    ofs.close();
+    return 0;
 }
