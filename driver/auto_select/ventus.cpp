@@ -5,9 +5,13 @@
  */
 
 #include "ventus.h"
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <dlfcn.h>
 #include <filesystem>
+#include <fmt/core.h>
+#include <fstream>
 #include <map>
 #include <spdlog/spdlog.h>
 #include <string>
@@ -52,12 +56,20 @@ vt_api_t load_backend() {
     vt_api_t api = {0}; // 初始化函数指针结构体
 
     // 读取环境变量 VENTUS_BACKEND，确定动态库名
-    const char* backend_ = std::getenv("VENTUS_BACKEND");
-    std::string backend(backend_ ? backend_ : "spike");
+    const char *backend_ = std::getenv("VENTUS_BACKEND");
+    std::string backend = backend_ ? backend_ : "spike";
+    std::transform(backend.begin(), backend.end(), backend.begin(), [](unsigned char c) {
+        return std::tolower(c);
+    });
     std::map<std::string, std::string> backend_map;
+    backend_map["isa"] = "libspike_driver.so";
     backend_map["spike"] = "libspike_driver.so";
     backend_map["rtlsim"] = "librtlsim_driver.so";
+    backend_map["rtl"] = "librtlsim_driver.so";
+    backend_map["gpgpu"] = "librtlsim_driver.so";
     backend_map["cyclesim"] = "libcyclesim_driver.so";
+    backend_map["simulator"] = "libcyclesim_driver.so";
+    backend_map["systemc"] = "libcyclesim_driver.so";
 
     std::string backend_soname;
     if (backend_map.find(backend) != backend_map.end()) {
@@ -125,9 +137,7 @@ vt_api_t load_backend() {
 struct BackendLoader {
     vt_api_t api = {0};
     bool loaded = false;
-    BackendLoader() {
-        // api = load_backend();
-    }
+    BackendLoader() { api = load_backend(); }
 };
 static BackendLoader loader;
 

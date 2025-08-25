@@ -43,8 +43,8 @@ static bool parse_bool(std::string str, bool default_val = false) {
     if (str == "false" || str == "0" || str == "no" || str == "off") return false;
     return default_val;
 }
-static bool parse_bool(const char* str, bool default_val = false) {
-    if(str == nullptr) return default_val;
+static bool parse_bool(const char *str, bool default_val = false) {
+    if (str == nullptr) return default_val;
     return parse_bool(std::string(str), default_val);
 }
 
@@ -58,7 +58,8 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     auto device = ventus_cyclesim_init(&config);
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
-    logger->debug("vt_dev_open : hello world from ventus.cpp (cyclesim device)");
+    logger->set_level(spdlog::level::debug);
+    SPDLOG_LOGGER_DEBUG(logger, "vt_dev_open : hello world from ventus.cpp (cyclesim device)");
 
     // TODO: temp
     // POCL should call vt_root_mem_alloc() to create virtual memory space before any buf_alloc
@@ -74,6 +75,7 @@ extern int vt_dev_close(vt_device_h hdevice) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     ventus_cyclesim_finish(device, false);
+    SPDLOG_LOGGER_DEBUG(logger, "vt_dev_close: goodbye from ventus.cpp (cyclesim device)");
     return 0;
 }
 extern int vt_dev_caps(vt_device_h *hdevice, host_port_t *input_sig) {
@@ -93,9 +95,9 @@ extern int vt_buf_alloc(
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     uint64_t vaddr_allocated =
         ventus_cyclesim_vmem_alloc(device, ptroots[taskID], alloc_vaddr, size);
-    logger->debug(
-        "vt_buf_alloc: vaddr_recommand={:x}, vaddr_allocated={:x}, size={}, taskID={}", *vaddr,
-        vaddr_allocated, size, taskID
+    SPDLOG_LOGGER_DEBUG(
+        logger, "vt_buf_alloc: vaddr_recommand={:x}, vaddr_allocated={:x}, size=0x{:x}, taskID={}",
+        *vaddr, vaddr_allocated, size, taskID
     );
     alloc_vaddr += (size > 0x1000) ? size : 0x1000;
     *vaddr = vaddr_allocated;
@@ -109,6 +111,9 @@ extern int vt_buf_free(
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     ventus_cyclesim_vmem_free(device, ptroots[taskID], *vaddr, size);
+    SPDLOG_LOGGER_DEBUG(
+        logger, "vt_buf_free: vaddr=0x{:x}, size=0x{:x}, taskID={}", *vaddr, size, taskID
+    );
     return 0;
 }
 
@@ -118,6 +123,9 @@ extern int vt_one_buf_free(
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     ventus_cyclesim_vmem_free(device, ptroots[taskID], *vaddr, size);
+    SPDLOG_LOGGER_DEBUG(
+        logger, "vt_buf_free: vaddr=0x{:x}, size=0x{:x}, taskID={}", *vaddr, size, taskID
+    );
     return 0;
 }
 
@@ -132,7 +140,7 @@ extern int vt_root_mem_alloc(vt_device_h hdevice, int taskID) {
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     auto ptroot = ventus_cyclesim_vmem_create(device);
     if (ptroot == 0) return -1;
-    logger->debug("vt_root_mem_alloc: taskID={}, ptroot={:x}", taskID, ptroot);
+    SPDLOG_LOGGER_DEBUG(logger, "vt_root_mem_alloc: taskID={}, ptroot={:x}", taskID, ptroot);
     ptroots[taskID] = ptroot;
     return 0;
 }
@@ -148,6 +156,9 @@ extern int vt_root_mem_free(vt_device_h hdevice, int taskID) {
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     ventus_cyclesim_vmem_destroy(device, ptroots[taskID]);
     ptroots.erase(taskID);
+    SPDLOG_LOGGER_DEBUG(
+        logger, "vt_root_mem_free: taskID={}, ptroot={:x}", taskID, ptroots[taskID]
+    );
     return 0;
 }
 
@@ -157,13 +168,15 @@ extern int vt_copy_to_dev(
 ) {
     if (hdevice == nullptr) return -1;
     if (dev_vaddr >= 0x70000000 && dev_vaddr < 0x80000000) {
-        logger->warn("vt_copy_to_dev: dev_vaddr={:x} in LDS space, ignored", dev_vaddr);
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_copy_to_dev: dev_vaddr={:x} in LDS space, not supportted", dev_vaddr
+        );
         return 0;
     }
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
-    logger->debug(
-        "vt_copy_to_dev: dev_vaddr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size, taskID,
-        kernelID
+    SPDLOG_LOGGER_DEBUG(
+        logger, "vt_copy_to_dev: dev_vaddr={:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
+        size, taskID, kernelID
     );
     ventus_cyclesim_vmemcpy_h2d(device, ptroots[taskID], dev_vaddr, src_addr, size);
     return 0;
@@ -175,9 +188,9 @@ extern int vt_copy_from_dev(
 ) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
-    logger->debug(
-        "vt_copy_from_dev: dev_vaddr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size,
-        taskID, kernelID
+    SPDLOG_LOGGER_DEBUG(
+        logger, "vt_copy_from_dev: dev_vaddr={:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
+        size, taskID, kernelID
     );
     ventus_cyclesim_vmemcpy_d2h(device, ptroots[taskID], dst_addr, dev_vaddr, size);
     return 0;
@@ -211,6 +224,14 @@ extern int vt_start(vt_device_h hdevice, void *mtd_raw, uint64_t taskID) {
         .pagetable = ptroots[taskID],
     };
     ventus_cyclesim_add_kernel(device, &mtd_sim, nullptr);
+    SPDLOG_LOGGER_DEBUG(
+        logger,
+        "vt_start: taskID={}, kernelID={}, kernel_size=({},{},{}), "
+        "wgsize={}, wfsize={}, pds_size=0x{:x}, lds_size=0x{:x}, addr_meta=0x{:x}, addr_pds=0x{:x}",
+        taskID, mtd_sim.kernel_id, mtd_sim.kernel_size[0], mtd_sim.kernel_size[1],
+        mtd_sim.kernel_size[2], mtd_sim.wg_size, mtd_sim.wf_size, mtd_sim.pdsSize, mtd_sim.ldsSize,
+        mtd_sim.metaDataBaseAddr, mtd_sim.pdsBaseAddr
+    );
     return 0;
 }
 
@@ -252,7 +273,7 @@ extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int 
             }
             return -1;
         }
-        logger->debug("vt_upload_kernel_file: vaddr={:x}, size={}", vaddr, size);
+        logger->debug("vt_upload_kernel_file: vaddr={:x}, size=0x{:x}", vaddr, size);
         ventus_cyclesim_vmemcpy_h2d(device, ptroot, vaddr, block->data.data(), block->data.size());
         std::vector<uint8_t> zeros(size - block->data.size(), 0);
         ventus_cyclesim_vmemcpy_h2d(
