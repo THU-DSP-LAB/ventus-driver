@@ -97,26 +97,11 @@ extern int vt_buf_alloc(
     if (size <= 0 || hdevice == nullptr) return -1;
 
     uint64_t* fw_vaddr = new uint64_t;
-    *fw_vaddr = *vaddr;
     fw_vt_buf_alloc(size, fw_vaddr, BUF_TYPE, taskID, kernelID);
-    delete fw_vaddr;
 
-    auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    size_t pgcnt = (size + 4095) / 4096;
-    uint64_t vaddr_allocated = alloc_vaddr;
-    for (size_t pg = 0; pg < pgcnt; pg++) {
-        if (ventus_rtlsim_pmem_page_alloc(device, vaddr_allocated + pg * 4096) == false) {
-            logger->error("vt_buf_alloc: page alloc failed");
-            return -1;
-        }
-    }
-    logger->debug(
-        "vt_buf_alloc: vaddr_recommand={:x}, vaddr_allocated={:x}, size={}, taskID={}", *vaddr,
-        vaddr_allocated, size, taskID
-    );
-    alloc_vaddr += pgcnt * 4096;
-    *vaddr = vaddr_allocated;
+    *vaddr = *fw_vaddr;
     if (*vaddr == 0) return -1;
+    delete fw_vaddr;
     return 0;
 }
 
@@ -204,7 +189,7 @@ extern int vt_copy_from_dev(
 ) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    logger->debug(
+    SPDLOG_LOGGER_DEBUG(logger,
         "vt_copy_from_dev: dev_addr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size, taskID,
         kernelID
     );
