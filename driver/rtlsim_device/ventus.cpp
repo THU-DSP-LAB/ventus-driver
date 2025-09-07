@@ -277,7 +277,7 @@ extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int 
         std::vector<uint8_t> zeros(size - block->data.size(), 0);
         ventus_rtlsim_pmemcpy_h2d(device, vaddr + block->data.size(), zeros.data(), zeros.size());
     }
-
+    ventus_rtlsim_icache_invalidate(device);
     return 0;
 }
 int vt_upload_kernel_bytes(vt_device_h device, const void *content, uint64_t size, int taskID) {
