@@ -29,6 +29,7 @@ typedef struct driver_metadata_t {
     uint64_t vgprUsage;        ///> 每个thread使用的向量寄存器数目
     uint64_t pdsBaseAddr; ///> private memory的基址，要转成每个workgroup的基地址，
                           /// wf_size*wg_size*pdsSize
+    const char* kernel_name;
 } driver_metadata_t;
 
 // static std::map<int, uint64_t> ptroots; // pagetable root physical address
@@ -203,7 +204,7 @@ extern int vt_start(vt_device_h hdevice, void *mtd_raw, uint64_t taskID) {
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     auto mtd_driver = static_cast<driver_metadata_t *>(mtd_raw);
     ventus_kernel_metadata_t mtd_sim{
-        .name = "UnknownKernelName",
+        .name = mtd_driver->kernel_name,
         .data = nullptr,
         .startaddr = 0x80000000,
         .kernel_id = mtd_driver->kernel_id,
@@ -218,9 +219,6 @@ extern int vt_start(vt_device_h hdevice, void *mtd_raw, uint64_t taskID) {
         .vgprUsage = mtd_driver->vgprUsage,
         .pdsBaseAddr = mtd_driver->pdsBaseAddr,
         .num_buffer = 0,
-        .buffer_base = nullptr,
-        .buffer_size = nullptr,
-        .buffer_allocsize = nullptr,
     };
     SPDLOG_LOGGER_DEBUG(
         logger,
