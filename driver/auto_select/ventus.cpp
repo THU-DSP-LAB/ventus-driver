@@ -18,15 +18,25 @@
 #include <spdlog/spdlog.h>
 #include <string>
 
-// static void json_dump(std::string filename, nlohmann::json j);
+//
+// 用于导出memcpy_device_to_host的所有数据及其地址（环境变量VENTUS_DUMP_RESULT=filename.json）
+//
+
+// 辅助函数
 static int append_json_object(const std::string &filename, const nlohmann::json &new_obj);
 static std::string to_hex_string(uint32_t value) { return fmt::format("0x{:08X}", value); }
+// 下边两个函数也可被外界调用，方便再OpenCL APP中获取设备端指针具体地址
+// 获取上次memcpy_device_to_host的设备端地址
 extern "C" int __vt_get_last_copy_to_dev_addr(uint64_t *addr);
+// 设置json dump文件名，传入nullptr表示关闭dump功能，等价于VENTUS_DUMP_RESULT环境变量
 extern "C" void __vt_enable_dump_json_copy_to_dev(const char *filename);
-static uint64_t last_copy_to_dev_addr = 0;
-static std::optional<std::string> dump_copy_to_dev = std::nullopt;
+// 全局变量
+static uint64_t g_last_copy_to_dev_addr = 0; // 上次memcpy_device_to_host的设备端地址
+static std::optional<std::string> g_dump_result_filename = std::nullopt;
 
-// 定义函数指针结构体，包含所有 API 的函数指针
+//
+// 定义函数指针结构体，包含所有ventus.h API的函数指针
+//
 struct vt_api_t {
     int (*vt_dev_open)(vt_device_h *hdevice);
     int (*vt_dev_close)(vt_device_h hdevice);
@@ -163,9 +173,9 @@ extern "C" int vt_dev_open(vt_device_h *hdevice) {
     if (env_dump_result == nullptr) {
         env_dump_result = std::getenv("VENTUS_DRIVER_DUMP_RESULT"); // capability name
     }
-    if (!dump_copy_to_dev && env_dump_result) {
-        dump_copy_to_dev = std::string{env_dump_result};
-        std::ofstream ofs(*dump_copy_to_dev, std::ios::trunc | std::ios::out);
+    if (!g_dump_result_filename && env_dump_result) {
+        g_dump_result_filename = std::string{env_dump_result};
+        std::ofstream ofs(*g_dump_result_filename, std::ios::trunc | std::ios::out);
         ofs.close(); // 清空文件
     }
     return loader.api.vt_dev_open(hdevice);
@@ -228,9 +238,9 @@ extern "C" int vt_copy_from_dev(
     if (!loader.api.vt_copy_from_dev) return -1;
     int result = loader.api.vt_copy_from_dev(hdevice, dev_vaddr, dst_addr, size, taskID, kernelID);
     if (result == 0) {
-        last_copy_to_dev_addr = dev_vaddr;
+        g_last_copy_to_dev_addr = dev_vaddr;
     }
-    if (dump_copy_to_dev) {
+    if (g_dump_result_filename) {
         nlohmann::json j;
         j["address"] = to_hex_string(dev_vaddr);
         j["size"] = to_hex_string(size);
@@ -239,7 +249,7 @@ extern "C" int vt_copy_from_dev(
             addr_data[to_hex_string(dev_vaddr + i * 4)] = to_hex_string(((uint32_t *)dst_addr)[i]);
         }
         j["data"] = addr_data;
-        append_json_object(*dump_copy_to_dev, j);
+        append_json_object(*g_dump_result_filename, j);
     }
     return result;
 }
@@ -277,18 +287,18 @@ extern "C" int vt_dump_perf(vt_device_h device, FILE *stream) {
 }
 
 extern "C" int __vt_get_last_copy_to_dev_addr(uint64_t *addr) {
-    *addr = last_copy_to_dev_addr;
+    *addr = g_last_copy_to_dev_addr;
     return 0;
 }
 
 extern "C" void __vt_enable_dump_json_copy_to_dev(const char *filename) {
     if (!filename) {
-        dump_copy_to_dev = std::nullopt;
+        g_dump_result_filename = std::nullopt;
         return;
     }
-    if (!dump_copy_to_dev || *dump_copy_to_dev != filename) {
-        dump_copy_to_dev = std::string{filename};
-        std::ofstream ofs(*dump_copy_to_dev, std::ios::trunc | std::ios::out);
+    if (!g_dump_result_filename || *g_dump_result_filename != filename) {
+        g_dump_result_filename = std::string{filename};
+        std::ofstream ofs(*g_dump_result_filename, std::ios::trunc | std::ios::out);
         ofs.close(); // 清空文件
     }
 }
