@@ -77,6 +77,7 @@ vt_api_t load_backend() {
     backend_map["rtlsim"] = "librtlsim_driver.so";
     backend_map["rtl"] = "librtlsim_driver.so";
     backend_map["gpgpu"] = "librtlsim_driver.so";
+    backend_map["cycle"] = "libcyclesim_driver.so";
     backend_map["cyclesim"] = "libcyclesim_driver.so";
     backend_map["simulator"] = "libcyclesim_driver.so";
     backend_map["systemc"] = "libcyclesim_driver.so";
@@ -158,7 +159,10 @@ extern "C" int vt_dev_open(vt_device_h *hdevice) {
         loader.loaded = true;        // 标记为已加载
     }
     if (!loader.api.vt_dev_open) return -1;
-    const char *env_dump_result = std::getenv("VENTUS_DRIVER_DUMP_RESULT");
+    const char *env_dump_result = std::getenv("VENTUS_DUMP_RESULT");
+    if (env_dump_result == nullptr) {
+        env_dump_result = std::getenv("VENTUS_DRIVER_DUMP_RESULT"); // capability name
+    }
     if (!dump_copy_to_dev && env_dump_result) {
         dump_copy_to_dev = std::string{env_dump_result};
         std::ofstream ofs(*dump_copy_to_dev, std::ios::trunc | std::ios::out);

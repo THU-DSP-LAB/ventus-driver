@@ -7,8 +7,8 @@
 
 #include "ventus.h"
 #include "loadelf.hpp"
+#include "utils.hpp"
 #include "ventus_cyclesim.h"
-#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <map>
@@ -31,23 +31,12 @@ typedef struct driver_metadata_t {
     uint64_t vgprUsage;        ///> 每个thread使用的向量寄存器数目
     uint64_t pdsBaseAddr; ///> private memory的基址，要转成每个workgroup的基地址，
                           /// wf_size*wg_size*pdsSize
-    const char* kernel_name;
+    const char *kernel_name;
 } driver_metadata_t;
 
 static std::map<int, uint64_t> ptroots; // pagetable root physical address
 static std::shared_ptr<spdlog::logger> logger;
 static uint64_t alloc_vaddr = 0x90000000;
-
-static bool parse_bool(std::string str, bool default_val = false) {
-    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
-    if (str == "true" || str == "1" || str == "yes" || str == "on") return true;
-    if (str == "false" || str == "0" || str == "no" || str == "off") return false;
-    return default_val;
-}
-static bool parse_bool(const char *str, bool default_val = false) {
-    if (str == nullptr) return default_val;
-    return parse_bool(std::string(str), default_val);
-}
 
 /// open the device and connect to it
 extern int vt_dev_open(vt_device_h *hdevice) {
@@ -55,7 +44,9 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     ventus_cyclesim_config_t config;
     ventus_cyclesim_get_default_config(&config);
     config.sim_time_max = ~0ull;
-    config.waveform.enable = parse_bool(std::getenv("CYCLESIM_WAVEFORM_ENABLE"), false);
+    config.waveform.enable = parse_bool(std::getenv("VENTUS_WAVEFORM")).value_or(false);
+    config.waveform.enable |= parse_u64(std::getenv("VENTUS_WAVEFORM_BEGIN")).has_value();
+    config.waveform.enable |= parse_u64(std::getenv("VENTUS_WAVEFORM_END")).has_value();
     auto device = ventus_cyclesim_init(&config);
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
