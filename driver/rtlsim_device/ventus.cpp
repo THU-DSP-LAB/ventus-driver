@@ -5,6 +5,7 @@
  * 1. `/include/ventus.h`中声明的函数
  */
 
+#include <utils.hpp>
 #include "ventus.h"
 #include "buddy.hpp"
 #include "loadelf.hpp"
@@ -29,6 +30,7 @@ typedef struct driver_metadata_t {
     uint64_t vgprUsage;        ///> 每个thread使用的向量寄存器数目
     uint64_t pdsBaseAddr; ///> private memory的基址，要转成每个workgroup的基地址，
                           /// wf_size*wg_size*pdsSize
+    const char *kernel_name;
 } driver_metadata_t;
 
 // static std::map<int, uint64_t> ptroots; // pagetable root physical address
@@ -45,17 +47,19 @@ static constexpr unsigned log2Ceil(unsigned n) {
 extern int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
 
-    auto env_waveform_begin = std::getenv("RTLSIM_WAVEFORM_BEGIN");
-    auto env_waveform_end = std::getenv("RTLSIM_WAVEFORM_END");
+    auto env_waveform = std::getenv("VENTUS_WAVEFORM");
+    auto env_waveform_begin = std::getenv("VENTUS_WAVEFORM_BEGIN");
+    auto env_waveform_end = std::getenv("VENTUS_WAVEFORM_END");
     bool waveform_enable = false;
-    uint64_t waveform_begin = 0;
+    uint64_t waveform_begin = UINT64_MAX; // default: not enable
     uint64_t waveform_end = 0;
-    if (env_waveform_begin || env_waveform_end) {
-        waveform_begin =
-            static_cast<uint64_t>(env_waveform_begin ? std::stoll(env_waveform_begin) : -1);
-        waveform_end = static_cast<uint64_t>(env_waveform_end ? std::stoll(env_waveform_end) : 0);
-        waveform_enable = waveform_end > waveform_begin;
+    if (parse_bool(env_waveform).value_or(false)) {
+        waveform_begin = 0; // default: dump waveform all time
+        waveform_end = UINT64_MAX;
     }
+    waveform_begin = parse_u64(env_waveform_begin).value_or(waveform_begin);
+    waveform_end = parse_u64(env_waveform_end).value_or(waveform_end);
+    waveform_enable = waveform_end > waveform_begin;
 
     ventus_rtlsim_config_t config;
     ventus_rtlsim_get_default_config(&config);
@@ -73,7 +77,8 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
     logger->set_level(spdlog::level::trace);
-    logger->debug("vt_dev_open : hello world from ventus.cpp (rtlsim device)");
+    logger->set_pattern("[%l] %v [%s:%#]");
+    SPDLOG_LOGGER_DEBUG(logger, "vt_dev_open : hello world from ventus.cpp (rtlsim device)");
     return 0;
 }
 
@@ -82,7 +87,7 @@ extern int vt_dev_close(vt_device_h hdevice) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     ventus_rtlsim_finish(device, false);
-    logger->debug("vt_dev_close : goodbye from ventus.cpp (rtlsim device)");
+    SPDLOG_LOGGER_DEBUG(logger, "vt_dev_close : goodbye from ventus.cpp (rtlsim device)");
     return 0;
 }
 extern int vt_dev_caps(vt_device_h *hdevice, host_port_t *input_sig) {
@@ -104,12 +109,13 @@ extern int vt_buf_alloc(
     size_t pgcnt = (size + 4095) / 4096;
     paddr_t addr_allocated = buddy_allocator.allocate(log2Ceil(pgcnt)) + BUDDY_BASE;
     if (addr_allocated == BUDDY_BASE) {
-        logger->error("vt_buf_alloc: buddy allocator failed, size=0x{:x}", size);
+        SPDLOG_LOGGER_ERROR(logger, "vt_buf_alloc: buddy allocator failed, size=0x{:x}", size);
         return -1;
     }
-    logger->debug(
-        "vt_buf_alloc: vaddr_recommand={:x}, vaddr_allocated={:x}, size=0x{:x}, taskID={}", *vaddr,
-        addr_allocated, size, taskID
+    SPDLOG_LOGGER_DEBUG(
+        logger,
+        "vt_buf_alloc: vaddr_recommand=0x{:x}, vaddr_allocated=0x{:x}, size=0x{:x}, taskID={}",
+        *vaddr, addr_allocated, size, taskID
     );
     *vaddr = addr_allocated; // This is paddr actually
     if (*vaddr == 0) return -1;
@@ -125,7 +131,7 @@ extern int vt_buf_free(
     size_t pgcnt = (size + 4095) / 4096;
     // Not really freed in hardware, just in buddy allocator
     buddy_allocator.free(*vaddr - BUDDY_BASE, log2Ceil(pgcnt));
-    SPDLOG_LOGGER_INFO(logger, "vt_buf_free: vaddr={:x}, size={}", *vaddr, size);
+    SPDLOG_LOGGER_INFO(logger, "vt_buf_free: vaddr=0x{:x}, size=0x{:x}", *vaddr, size);
     return 0;
 }
 
@@ -149,7 +155,7 @@ extern int vt_root_mem_alloc(vt_device_h hdevice, int taskID) {
     // logger->debug("vt_root_mem_alloc: taskID={}, ptroot={:x}", taskID, ptroot);
     // ptroots[taskID] = ptroot;
     if (taskID == 0) {
-        logger->error("RTLSIM_device does not support VMEM yet, taskID must be 0");
+        SPDLOG_LOGGER_ERROR(logger, "RTLSIM_device does not support VMEM yet, taskID must be 0");
     }
     return 0;
 }
@@ -174,9 +180,9 @@ extern int vt_copy_to_dev(
 ) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    logger->debug(
-        "vt_copy_to_dev: dev_addr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size, taskID,
-        kernelID
+    SPDLOG_LOGGER_DEBUG(
+        logger, "vt_copy_to_dev: dev_addr=0x{:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
+        size, taskID, kernelID
     );
     ventus_rtlsim_pmemcpy_h2d(device, dev_vaddr, src_addr, size);
     return 0;
@@ -188,9 +194,9 @@ extern int vt_copy_from_dev(
 ) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    logger->debug(
-        "vt_copy_from_dev: dev_addr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size, taskID,
-        kernelID
+    SPDLOG_LOGGER_DEBUG(
+        logger, "vt_copy_from_dev: dev_addr=0x{:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
+        size, taskID, kernelID
     );
     ventus_rtlsim_pmemcpy_d2h(device, dst_addr, dev_vaddr, size);
     return 0;
@@ -201,7 +207,7 @@ extern int vt_start(vt_device_h hdevice, void *mtd_raw, uint64_t taskID) {
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     auto mtd_driver = static_cast<driver_metadata_t *>(mtd_raw);
     ventus_kernel_metadata_t mtd_sim{
-        .name = "UnknownKernelName",
+        .name = mtd_driver->kernel_name,
         .data = nullptr,
         .startaddr = 0x80000000,
         .kernel_id = mtd_driver->kernel_id,
@@ -216,14 +222,12 @@ extern int vt_start(vt_device_h hdevice, void *mtd_raw, uint64_t taskID) {
         .vgprUsage = mtd_driver->vgprUsage,
         .pdsBaseAddr = mtd_driver->pdsBaseAddr,
         .num_buffer = 0,
-        .buffer_base = nullptr,
-        .buffer_size = nullptr,
-        .buffer_allocsize = nullptr,
     };
-    logger->debug(
+    SPDLOG_LOGGER_DEBUG(
+        logger,
         "kernel metadata: kernel_id={}, kernel_size=[{}, {}, {}], wf_size={}, wg_size={}, "
-        "metaDataBaseAddr={:x}, ldsSize={}, pdsSize={}, sgprUsage={}, vgprUsage={}, "
-        "pdsBaseAddr={:x}",
+        "metaDataBaseAddr=0x{:x}, ldsSize=0x{:x}, pdsSize=0x{:x}, sgprUsage={}, "
+        "vgprUsage={}, pdsBaseAddr=0x{:x}",
         mtd_driver->kernel_id, mtd_driver->kernel_size[0], mtd_driver->kernel_size[1],
         mtd_driver->kernel_size[2], mtd_driver->wf_size, mtd_driver->wg_size,
         mtd_driver->metaDataBaseAddr, mtd_driver->ldsSize, mtd_driver->pdsSize,
@@ -244,10 +248,6 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
         // TODO: RTL does not provide a way to check if L2 cache flush is done
         ventus_rtlsim_step(device);
     }
-    // TODO: temp
-    // it seems that vt_dev_close() is not called by POCL
-    // we call it here to make waveform output sucessful
-    // vt_dev_close(hdevice);
     return 0;
 }
 
@@ -271,12 +271,14 @@ extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int 
     for (auto block = blocks.begin(); block != blocks.end(); block++) {
         uint64_t vaddr = block->vaddr;
         uint64_t size = block->memsz;
-        logger->debug("vt_upload_kernel_file {}: addr={:x}, size={}", filename, vaddr, size);
+        SPDLOG_LOGGER_DEBUG(
+            logger, "vt_upload_kernel_file {}: vaddr=0x{:x}, size=0x{:x}", filename, vaddr, size
+        );
         ventus_rtlsim_pmemcpy_h2d(device, vaddr, block->data.data(), block->data.size());
         std::vector<uint8_t> zeros(size - block->data.size(), 0);
         ventus_rtlsim_pmemcpy_h2d(device, vaddr + block->data.size(), zeros.data(), zeros.size());
     }
-
+    ventus_rtlsim_icache_invalidate(device);
     return 0;
 }
 int vt_upload_kernel_bytes(vt_device_h device, const void *content, uint64_t size, int taskID) {

@@ -14,6 +14,9 @@ target_link_libraries(${PROJECT} PRIVATE driver_common_utils)
 target_link_libraries(${PROJECT} PRIVATE spdlog)
 target_link_libraries(${PROJECT} PRIVATE fmt)
 
+target_compile_definitions(${PROJECT} PRIVATE
+    SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
+)
 set_target_properties(${PROJECT} PROPERTIES OUTPUT_NAME "${PROJECT}")
 set_target_properties(${PROJECT} PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 set_target_properties(${PROJECT} PROPERTIES
