@@ -34,9 +34,10 @@ typedef struct driver_metadata_t {
     const char *kernel_name;
 } driver_metadata_t;
 
-static std::map<int, uint64_t> ptroots; // pagetable root physical address
+static std::map<int, uint64_t> g_ptroots; // pagetable root physical address
 static std::shared_ptr<spdlog::logger> logger;
-static uint64_t alloc_vaddr = 0x90000000;
+static uint64_t g_alloc_vaddr = 0x90000000;
+static std::vector<std::pair<vaddr_t, size_t>> g_elf_alloc;
 
 /// open the device and connect to it
 extern int vt_dev_open(vt_device_h *hdevice) {
@@ -58,7 +59,7 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     // but currently it seems not. So we create a default root page table here.
     uint64_t ptroot = ventus_cyclesim_vmem_create(device);
     if (ptroot == 0) return -1;
-    ptroots[0] = ptroot;
+    g_ptroots[0] = ptroot;
     return 0;
 }
 
@@ -86,12 +87,12 @@ extern int vt_buf_alloc(
     if (size <= 0 || hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     uint64_t vaddr_allocated =
-        ventus_cyclesim_vmem_alloc(device, ptroots[taskID], alloc_vaddr, size);
+        ventus_cyclesim_vmem_alloc(device, g_ptroots[taskID], g_alloc_vaddr, size);
     SPDLOG_LOGGER_DEBUG(
         logger, "vt_buf_alloc: vaddr_recommand={:x}, vaddr_allocated={:x}, size=0x{:x}, taskID={}",
         *vaddr, vaddr_allocated, size, taskID
     );
-    alloc_vaddr += (size > 0x1000) ? size : 0x1000;
+    g_alloc_vaddr += (size > 0x1000) ? size : 0x1000;
     *vaddr = vaddr_allocated;
     if (*vaddr == 0) return -1;
     return 0;
@@ -102,7 +103,7 @@ extern int vt_buf_free(
 ) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
-    ventus_cyclesim_vmem_free(device, ptroots[taskID], *vaddr, size);
+    ventus_cyclesim_vmem_free(device, g_ptroots[taskID], *vaddr, size);
     SPDLOG_LOGGER_DEBUG(
         logger, "vt_buf_free: vaddr=0x{:x}, size=0x{:x}, taskID={}", *vaddr, size, taskID
     );
@@ -114,7 +115,7 @@ extern int vt_one_buf_free(
 ) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
-    ventus_cyclesim_vmem_free(device, ptroots[taskID], *vaddr, size);
+    ventus_cyclesim_vmem_free(device, g_ptroots[taskID], *vaddr, size);
     SPDLOG_LOGGER_DEBUG(
         logger, "vt_buf_free: vaddr=0x{:x}, size=0x{:x}, taskID={}", *vaddr, size, taskID
     );
@@ -133,7 +134,7 @@ extern int vt_root_mem_alloc(vt_device_h hdevice, int taskID) {
     auto ptroot = ventus_cyclesim_vmem_create(device);
     if (ptroot == 0) return -1;
     SPDLOG_LOGGER_DEBUG(logger, "vt_root_mem_alloc: taskID={}, ptroot={:x}", taskID, ptroot);
-    ptroots[taskID] = ptroot;
+    g_ptroots[taskID] = ptroot;
     return 0;
 }
 
@@ -146,10 +147,10 @@ extern int vt_root_mem_alloc(vt_device_h hdevice, int taskID) {
 extern int vt_root_mem_free(vt_device_h hdevice, int taskID) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
-    ventus_cyclesim_vmem_destroy(device, ptroots[taskID]);
-    ptroots.erase(taskID);
+    ventus_cyclesim_vmem_destroy(device, g_ptroots[taskID]);
+    g_ptroots.erase(taskID);
     SPDLOG_LOGGER_DEBUG(
-        logger, "vt_root_mem_free: taskID={}, ptroot={:x}", taskID, ptroots[taskID]
+        logger, "vt_root_mem_free: taskID={}, ptroot={:x}", taskID, g_ptroots[taskID]
     );
     return 0;
 }
@@ -170,7 +171,7 @@ extern int vt_copy_to_dev(
         logger, "vt_copy_to_dev: dev_vaddr={:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
         size, taskID, kernelID
     );
-    ventus_cyclesim_vmemcpy_h2d(device, ptroots[taskID], dev_vaddr, src_addr, size);
+    ventus_cyclesim_vmemcpy_h2d(device, g_ptroots[taskID], dev_vaddr, src_addr, size);
     return 0;
 }
 
@@ -184,7 +185,7 @@ extern int vt_copy_from_dev(
         logger, "vt_copy_from_dev: dev_vaddr={:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
         size, taskID, kernelID
     );
-    ventus_cyclesim_vmemcpy_d2h(device, ptroots[taskID], dst_addr, dev_vaddr, size);
+    ventus_cyclesim_vmemcpy_d2h(device, g_ptroots[taskID], dst_addr, dev_vaddr, size);
     return 0;
 }
 
@@ -213,7 +214,7 @@ extern int vt_start(vt_device_h hdevice, void *mtd_raw, uint64_t taskID) {
         .buffer_base = nullptr,
         .buffer_size = nullptr,
         .buffer_allocsize = nullptr,
-        .pagetable = ptroots[taskID],
+        .pagetable = g_ptroots[taskID],
     };
     ventus_cyclesim_add_kernel(device, &mtd_sim, nullptr);
     SPDLOG_LOGGER_DEBUG(
@@ -245,13 +246,19 @@ extern int vt_finish_all_kernel(vt_device_h hdevice, std::queue<int> *finished_k
 extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int taskID) {
     if (hdevice == nullptr) return -1;
     auto device = (ventus_cyclesim_t *)hdevice;
-    uint64_t ptroot = ptroots[taskID];
+    uint64_t ptroot = g_ptroots[taskID];
 
     // parse ELF file, find .text and other data sections
     const auto blocks = get_data_from_elf(filename, logger);
     if (blocks.empty()) {
         return -1; // at least .text section is needed
     }
+
+    for (const auto &to_free : g_elf_alloc) {
+        // free previous ELF allocations
+        ventus_cyclesim_vmem_free(device, ptroot, to_free.first, to_free.second);
+    }
+    g_elf_alloc.clear();
 
     // alloc and load/zero-fill each block
     for (auto block = blocks.begin(); block != blocks.end(); block++) {
@@ -265,7 +272,10 @@ extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int 
             }
             return -1;
         }
-        logger->debug("vt_upload_kernel_file: vaddr={:x}, size=0x{:x}", vaddr, size);
+        g_elf_alloc.push_back(std::make_pair(vaddr, size));
+        SPDLOG_LOGGER_DEBUG(
+            logger, "vt_upload_kernel_file {}: vaddr={:x}, size=0x{:x}", filename, vaddr, size
+        );
         ventus_cyclesim_vmemcpy_h2d(device, ptroot, vaddr, block->data.data(), block->data.size());
         std::vector<uint8_t> zeros(size - block->data.size(), 0);
         ventus_cyclesim_vmemcpy_h2d(
