@@ -5,6 +5,7 @@
  * 1. `/include/ventus.h`中声明的函数
  */
 
+#include <utils.hpp>
 #include "ventus.h"
 #include "loadelf.hpp"
 #include "ventus_gvm.h"
@@ -39,17 +40,19 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
     fw_vt_dev_open();
 
-    auto env_waveform_begin = std::getenv("RTLSIM_WAVEFORM_BEGIN");
-    auto env_waveform_end = std::getenv("RTLSIM_WAVEFORM_END");
+    auto env_waveform = std::getenv("VENTUS_WAVEFORM");
+    auto env_waveform_begin = std::getenv("VENTUS_WAVEFORM_BEGIN");
+    auto env_waveform_end = std::getenv("VENTUS_WAVEFORM_END");
     bool waveform_enable = false;
-    uint64_t waveform_begin = 0;
+    uint64_t waveform_begin = UINT64_MAX; // default: not enable
     uint64_t waveform_end = 0;
-    if (env_waveform_begin || env_waveform_end) {
-        waveform_begin =
-            static_cast<uint64_t>(env_waveform_begin ? std::stoll(env_waveform_begin) : -1);
-        waveform_end = static_cast<uint64_t>(env_waveform_end ? std::stoll(env_waveform_end) : 0);
-        waveform_enable = waveform_end > waveform_begin;
+    if (parse_bool(env_waveform).value_or(false)) {
+        waveform_begin = 0; // default: dump waveform all time
+        waveform_end = UINT64_MAX;
     }
+    waveform_begin = parse_u64(env_waveform_begin).value_or(waveform_begin);
+    waveform_end = parse_u64(env_waveform_end).value_or(waveform_end);
+        waveform_enable = waveform_end > waveform_begin;
 
     ventus_rtlsim_config_t config;
     ventus_rtlsim_get_default_config(&config);
