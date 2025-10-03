@@ -71,13 +71,9 @@ extern int vt_dev_close(vt_device_h hdevice) {
     SPDLOG_LOGGER_DEBUG(logger, "vt_dev_close: goodbye from ventus.cpp (cyclesim device)");
     return 0;
 }
-extern int vt_dev_caps(vt_device_h *hdevice, host_port_t *input_sig) {
-    // ??? TODO
-    return 0;
-}
 int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *value) {
     // TODO: Not implemented yet
-    return 0;
+    return -1;
 }
 
 extern int vt_buf_alloc(

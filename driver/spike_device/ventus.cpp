@@ -39,7 +39,7 @@ extern int vt_dev_caps(vt_device_h* hdevice, host_port_t* input_sig){
 
 int vt_dev_caps(vt_device_h* hdevice, uint64_t caps_id, uint64_t *value) {
     // TODO: Not implemented yet
-    return 0;
+    return -1;
 }
 
 extern int vt_buf_alloc(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID) {
