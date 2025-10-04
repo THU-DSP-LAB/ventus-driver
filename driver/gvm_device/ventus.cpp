@@ -83,13 +83,35 @@ extern int vt_dev_close(vt_device_h hdevice) {
     logger->debug("vt_dev_close : goodbye from ventus.cpp (gvm device)");
     return 0;
 }
-extern int vt_dev_caps(vt_device_h *hdevice, host_port_t *input_sig) {
-    // ??? TODO
-    return 0;
-}
 int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *value) {
-    // TODO: Not implemented yet
-    return 0;
+    if (value == nullptr) return -1;
+#define GET_PARAM(key)                                                                             \
+    do {                                                                                           \
+        uint32_t val;                                                                              \
+        if (ventus_rtlsim_get_parameter(key, &val) == 0) {                                         \
+            *value = val;                                                                          \
+            return 0;                                                                              \
+        } else {                                                                                   \
+            SPDLOG_LOGGER_ERROR(logger, "vt_dev_caps: get parameter {} failed", key);              \
+            return -1;                                                                             \
+        }                                                                                          \
+    } while (0)
+    switch (caps_id) {
+    case VT_CAPS_MAX_CORES:
+        GET_PARAM("num_sm");
+    case VT_CAPS_MAX_WARPS:
+        GET_PARAM("num_warp");
+    case VT_CAPS_MAX_THREADS:
+        GET_PARAM("num_thread");
+    case VT_CAPS_LOCAL_MEM_SIZE:
+        GET_PARAM("sharemem_size");
+    default:
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_dev_caps: unknown caps_id {} (or not implemented)", caps_id
+        );
+        return -1;
+    }
+    return -1;
 }
 
 extern int vt_buf_alloc(

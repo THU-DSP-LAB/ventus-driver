@@ -12,6 +12,7 @@ extern "C" {
 #define DLL_LOCAL
 #endif
 
+#include <stdbool.h>
 #include <stdint.h>
 
 typedef struct ventus_rtlsim_t ventus_rtlsim_t;
@@ -98,6 +99,8 @@ DLL_PUBLIC void ventus_rtlsim_get_default_config(ventus_rtlsim_config_t* config)
 DLL_PUBLIC uint64_t ventus_rtlsim_get_time(const ventus_rtlsim_t* sim);
 // Check if the simulated GPU is idle (no kernel is running).
 DLL_PUBLIC bool ventus_rtlsim_is_idle(const ventus_rtlsim_t* sim);
+// Get RTL parameters (output from *out_value, return 0 on success)
+DLL_PUBLIC int ventus_rtlsim_get_parameter(const char* name, uint32_t* out_value);
 
 //
 // Init, calculate, and finish
@@ -116,6 +119,11 @@ DLL_PUBLIC void ventus_rtlsim_finish(ventus_rtlsim_t* sim, bool snapshot_rollbac
 // Return the result of this step: ok, error, time_exceed, or idle.
 // If error occurred, calling this function has no effect, you should consider finish the simulation.
 DLL_PUBLIC const ventus_rtlsim_step_result_t* ventus_rtlsim_step(ventus_rtlsim_t* sim);
+
+// Host request GPGPU device to invalidate its Icache
+// (for example, after loading new kernel code to device memory)
+// This will take effect in the next simulation step()
+DLL_PUBLIC void ventus_rtlsim_icache_invalidate(ventus_rtlsim_t* sim);
 
 //
 // Push new kernels to gpu for execution.
