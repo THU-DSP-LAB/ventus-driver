@@ -45,6 +45,7 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     ventus_cyclesim_config_t config;
     ventus_cyclesim_get_default_config(&config);
     config.sim_time_max = ~0ull;
+    config.ramulator.enable = parse_bool(std::getenv("VENTUS_TIMING_DDR")).value_or(true);
     config.waveform.enable = parse_bool(std::getenv("VENTUS_WAVEFORM")).value_or(false);
     config.waveform.enable |= parse_u64(std::getenv("VENTUS_WAVEFORM_BEGIN")).has_value();
     config.waveform.enable |= parse_u64(std::getenv("VENTUS_WAVEFORM_END")).has_value();
