@@ -49,6 +49,7 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     config.waveform.enable = parse_bool(std::getenv("VENTUS_WAVEFORM")).value_or(false);
     config.waveform.enable |= parse_u64(std::getenv("VENTUS_WAVEFORM_BEGIN")).has_value();
     config.waveform.enable |= parse_u64(std::getenv("VENTUS_WAVEFORM_END")).has_value();
+    config.waveform.filename = "waveform.cycle";
     auto device = ventus_cyclesim_init(&config);
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
