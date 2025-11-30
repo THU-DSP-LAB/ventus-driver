@@ -1,0 +1,3 @@
+[submodule "dependencies/membox"]
+	path = dependencies/membox
+	url = https://github.com/THU-DSP-LAB/membox.git

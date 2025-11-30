@@ -1,51 +1,24 @@
 cmake_minimum_required(VERSION 3.22)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(PROJECT ventus_driver)
 project(${PROJECT})
 
 set(CMAKE_CXX_STANDARD 17)
-# set(CMAKE_CXX_FLAGS -Wl,--whole-archive -Wl,--no-whole-archive)
 
-include_directories(common)
-include_directories(include)
-include_directories(devices)
-include_directories(devices/verilating_device/page_table)
-include_directories(tests)
-include_directories(driver)
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wall")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wall")
 
-
-set(CMAKE_BUILD_TYPE "Debug")
-
-if(CMAKE_BUILD_TYPE AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wall -O0 -g -ggdb")
-    message("Debug mode:${CMAKE_CXX_FLAGS_DEBUG}")
-#    add_executable(test_debug ${src_dirs})
-
-
-elseif(CMAKE_BUILD_TYPE AND (CMAKE_BUILD_TYPE STREQUAL "Release"))
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wall -O3")
-    message("Release mode:${CMAKE_CXX_FLAGS_RELEASE}")
-#    add_executable(test_release ${src_dirs})
-else()
-    message("else:${CMAKE_BUILD_TYPE}")
-    message("else:${CMAKE_CXX_FLAGS_RELEASE}")
-#    add_executable(test_release ${src_dirs})
-endif()
-
-if(EXISTS "${CMAKE_SOURCE_DIR}/test.cpp")
-    set(CODING_TEST test)
-    add_executable(${CODING_TEST} test.cpp)
-endif()
-
-option(ENABLE_INSTALL "if install driver library to install dir" OFF)
-
-set(DRIVER_LIB_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/lib/)
-message(STATUS "DRIVER_LIB_INSTALL_DIR:" ${DRIVER_LIB_INSTALL_DIR} "\n")
-
-option(ENABLE_VERILATOR "if add verilated rtl device" OFF)
-
-add_subdirectory(devices)
+add_subdirectory(dependencies/membox)
+add_subdirectory(common)
 add_subdirectory(driver)
-if(ENABLE_VERILATOR)
-add_subdirectory(tests)
-endif()
 add_subdirectory(codetests)
+
+set(DRIVER_PUBLIC_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/ventus.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/common/vt_utils.h
+)
+install(FILES ${DRIVER_PUBLIC_HEADERS}
+    DESTINATION include COMPONENT "include"
+)

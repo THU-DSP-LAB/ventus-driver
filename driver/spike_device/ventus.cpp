@@ -9,11 +9,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
-#include <fstream>
-#include <future>
-#include <list>
-#include <chrono>
-// driver/page_table
 #include "ventus.h"
 #include "spike_main.h"
 
@@ -41,6 +36,12 @@ extern int vt_dev_caps(vt_device_h* hdevice, host_port_t* input_sig){
     // //set spike_device id to 1
     return 0;
 }
+
+int vt_dev_caps(vt_device_h* hdevice, uint64_t caps_id, uint64_t *value) {
+    // TODO: Not implemented yet
+    return -1;
+}
+
 extern int vt_buf_alloc(vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID, uint64_t kernelID) {
     if(size <= 0 || hdevice == nullptr)
         return -1;
@@ -211,3 +212,6 @@ extern int vt_upload_kernel_file(vt_device_h device, const char* filename, int t
   return err;
 }
 */
+
+int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t size, int taskID) { return 0; }
+int vt_dump_perf(vt_device_h device, FILE* stream) { return 0; }
