@@ -106,12 +106,12 @@ extern int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *dst_a
     return device->copy_from_dev(dev_vaddr, size, dst_addr);
 }
 
-extern int vt_start(vt_device_h hdevice, void* metaData, uint64_t taskID) {
+extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t* metaData, uint64_t taskID) {
     if(hdevice == nullptr)
         return -1;
     auto device = (spike_device *) hdevice;
-    auto knl_data = (meta_data *) metaData;
-    device->run(knl_data,0x80000000);
+
+    device->run(reinterpret_cast<meta_data*>(metaData),0x80000000);
     return 0;
 }
 extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {

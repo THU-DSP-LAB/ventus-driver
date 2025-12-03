@@ -18,21 +18,6 @@
 #include <stdlib.h>
 #include <sys/types.h>
 
-typedef struct driver_metadata_t {
-    uint64_t kernel_id;
-    uint64_t kernel_size[3];   ///> 每个kernel的workgroup三维数目
-    uint64_t wf_size;          ///> 每个warp的thread数目
-    uint64_t wg_size;          ///> 每个workgroup的warp数目
-    uint64_t metaDataBaseAddr; ///> CSR_KNL的值，
-    uint64_t ldsSize;          ///> 每个workgroup使用的local memory的大小
-    uint64_t pdsSize;          ///> 每个thread用到的private memory大小
-    uint64_t sgprUsage;        ///> 每个workgroup使用的标量寄存器数目
-    uint64_t vgprUsage;        ///> 每个thread使用的向量寄存器数目
-    uint64_t pdsBaseAddr; ///> private memory的基址，要转成每个workgroup的基地址，
-                          /// wf_size*wg_size*pdsSize
-    const char *kernel_name;
-} driver_metadata_t;
-
 // static std::map<int, uint64_t> ptroots; // pagetable root physical address
 static std::shared_ptr<spdlog::logger> logger;
 BuddyAllocator<4096> buddy_allocator((0xFFFFFFFF - 0x90000000 + 1) / 4096, 16);
@@ -224,10 +209,9 @@ extern int vt_copy_from_dev(
     return 0;
 }
 
-extern int vt_start(vt_device_h hdevice, void *mtd_raw, uint64_t taskID) {
-    if (hdevice == nullptr) return -1;
+extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint64_t taskID) {
+    if (hdevice == nullptr || mtd_driver == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    auto mtd_driver = static_cast<driver_metadata_t *>(mtd_raw);
     ventus_kernel_metadata_t mtd_sim{
         .name = mtd_driver->kernel_name,
         .data = nullptr,

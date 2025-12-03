@@ -255,7 +255,7 @@ extern "C" int vt_copy_from_dev(
     return result;
 }
 
-extern "C" int vt_start(vt_device_h hdevice, void *metaData, uint64_t taskID) {
+extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uint64_t taskID) {
     if (!loader.api.vt_start) return -1;
     return loader.api.vt_start(hdevice, metaData, taskID);
 }
