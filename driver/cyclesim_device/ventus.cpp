@@ -192,6 +192,15 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
         .sgprUsage = mtd_driver->sgprUsage,
         .vgprUsage = mtd_driver->vgprUsage,
         .pdsBaseAddr = mtd_driver->pdsBaseAddr,
+        .num_thread_global =
+            {mtd_driver->num_thread_global[0], mtd_driver->num_thread_global[1],
+             mtd_driver->num_thread_global[2]},
+        .num_thread_local =
+            {mtd_driver->num_thread_local[0], mtd_driver->num_thread_local[1],
+             mtd_driver->num_thread_local[2]},
+        .threadIdxOffset =
+            {mtd_driver->threadIdxOffset[0], mtd_driver->threadIdxOffset[1],
+             mtd_driver->threadIdxOffset[2]},
         .num_buffer = 0,
         .buffer_base = nullptr,
         .buffer_size = nullptr,
@@ -201,11 +210,14 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
     ventus_cyclesim_add_kernel(device, &mtd_sim, nullptr);
     SPDLOG_LOGGER_DEBUG(
         logger,
-        "vt_start: taskID={}, kernelID={}, kernel_size=({},{},{}), "
-        "wgsize={}, wfsize={}, pds_size=0x{:x}, lds_size=0x{:x}, addr_meta=0x{:x}, addr_pds=0x{:x}",
-        taskID, mtd_sim.kernel_id, mtd_sim.kernel_size[0], mtd_sim.kernel_size[1],
-        mtd_sim.kernel_size[2], mtd_sim.wg_size, mtd_sim.wf_size, mtd_sim.pdsSize, mtd_sim.ldsSize,
-        mtd_sim.metaDataBaseAddr, mtd_sim.pdsBaseAddr
+        "kernel metadata: kernel_id={}, kernel_size=[{}, {}, {}], wf_size={}, "
+        "wg_size=[{}, {}, {}]={}wf, metaDataBaseAddr=0x{:x}, ldsSize=0x{:x}, pdsSize=0x{:x}, "
+        "sgprUsage={}, vgprUsage={}, pdsBaseAddr=0x{:x}",
+        mtd_driver->kernel_id, mtd_driver->kernel_size[0], mtd_driver->kernel_size[1],
+        mtd_driver->kernel_size[2], mtd_driver->wf_size, mtd_driver->num_thread_local[0],
+        mtd_driver->num_thread_local[1], mtd_driver->num_thread_local[2], mtd_driver->wg_size,
+        mtd_driver->metaDataBaseAddr, mtd_driver->ldsSize, mtd_driver->pdsSize,
+        mtd_driver->sgprUsage, mtd_driver->vgprUsage, mtd_driver->pdsBaseAddr
     );
     return 0;
 }
