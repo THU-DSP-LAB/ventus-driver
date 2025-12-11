@@ -185,6 +185,11 @@ extern int vt_copy_to_dev(
         size, taskID, kernelID
     );
     ventus_rtlsim_pmemcpy_h2d(device, dev_vaddr, src_addr, size);
+    
+    ventus_rtlsim_dcache_invalidate(device);
+    // Make the invalidate take effect immediately in simulation.
+    ventus_rtlsim_step(device);
+    
     return 0;
 }
 
@@ -198,6 +203,12 @@ extern int vt_copy_from_dev(
         logger, "vt_copy_from_dev: dev_addr=0x{:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
         size, taskID, kernelID
     );
+    
+    // Ensure device dcache is invalidated/flushed before copying data back to host.
+    ventus_rtlsim_dcache_invalidate(device);
+    // Let the invalidate take effect in simulation before doing the memcpy.
+    ventus_rtlsim_step(device);
+    
     ventus_rtlsim_pmemcpy_d2h(device, dst_addr, dev_vaddr, size);
     return 0;
 }
@@ -241,11 +252,8 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     uint64_t timeout_ns = timeout * 1000000;
+    // Wait for GPU to become idle; cache invalidation is now controlled by host at copy time
     while (!ventus_rtlsim_is_idle(device) && ventus_rtlsim_get_time(device) < timeout_ns) {
-        ventus_rtlsim_step(device);
-    }
-    for (int i = 0; i < 5000; i++) {
-        // TODO: RTL does not provide a way to check if L2 cache flush is done
         ventus_rtlsim_step(device);
     }
     return 0;
