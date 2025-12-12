@@ -45,9 +45,11 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     ventus_cyclesim_config_t config;
     ventus_cyclesim_get_default_config(&config);
     config.sim_time_max = ~0ull;
+    config.ramulator.enable = parse_bool(std::getenv("VENTUS_TIMING_DDR")).value_or(true);
     config.waveform.enable = parse_bool(std::getenv("VENTUS_WAVEFORM")).value_or(false);
     config.waveform.enable |= parse_u64(std::getenv("VENTUS_WAVEFORM_BEGIN")).has_value();
     config.waveform.enable |= parse_u64(std::getenv("VENTUS_WAVEFORM_END")).has_value();
+    config.waveform.filename = "waveform.cycle";
     auto device = ventus_cyclesim_init(&config);
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
@@ -71,13 +73,9 @@ extern int vt_dev_close(vt_device_h hdevice) {
     SPDLOG_LOGGER_DEBUG(logger, "vt_dev_close: goodbye from ventus.cpp (cyclesim device)");
     return 0;
 }
-extern int vt_dev_caps(vt_device_h *hdevice, host_port_t *input_sig) {
-    // ??? TODO
-    return 0;
-}
 int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *value) {
     // TODO: Not implemented yet
-    return 0;
+    return -1;
 }
 
 extern int vt_buf_alloc(
@@ -172,6 +170,11 @@ extern int vt_copy_to_dev(
         size, taskID, kernelID
     );
     ventus_cyclesim_vmemcpy_h2d(device, g_ptroots[taskID], dev_vaddr, src_addr, size);
+    
+    ventus_cyclesim_dcache_invalidate(device);
+    // Make the invalidate take effect immediately in simulation.
+    ventus_cyclesim_step(device);
+    
     return 0;
 }
 
@@ -185,6 +188,12 @@ extern int vt_copy_from_dev(
         logger, "vt_copy_from_dev: dev_vaddr={:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
         size, taskID, kernelID
     );
+    
+    // Ensure device dcache is invalidated/flushed before copying data back to host.
+    ventus_cyclesim_dcache_invalidate(device);
+    // Let the invalidate take effect in simulation before doing the memcpy.
+    ventus_cyclesim_step(device);
+    
     ventus_cyclesim_vmemcpy_d2h(device, g_ptroots[taskID], dst_addr, dev_vaddr, size);
     return 0;
 }
