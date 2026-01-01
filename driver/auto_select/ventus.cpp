@@ -17,6 +17,8 @@
 #include <optional>
 #include <spdlog/spdlog.h>
 #include <string>
+#include <system_error>
+#include <unordered_set>
 
 //
 // 用于导出memcpy_device_to_host的所有数据及其地址（环境变量VENTUS_DUMP_RESULT=filename.json）
@@ -71,6 +73,21 @@ struct vt_api_t {
     int (*vt_dump_perf)(vt_device_h device, FILE *stream);
 } vt_api = {0};
 
+static std::vector<std::string> strsplit(const std::string &s, char delim) {
+    std::vector<std::string> result;
+    std::size_t start = 0;
+    while (true) {
+        auto pos = s.find(delim, start);
+        if (pos == std::string::npos) {
+            result.emplace_back(s.substr(start));
+            break;
+        }
+        result.emplace_back(s.substr(start, pos - start));
+        start = pos + 1;
+    }
+    return result;
+}
+
 // 加载后端库并设置函数指针
 vt_api_t load_backend() {
     vt_api_t api = {0}; // 初始化函数指针结构体
@@ -81,6 +98,7 @@ vt_api_t load_backend() {
     std::transform(backend.begin(), backend.end(), backend.begin(), [](unsigned char c) {
         return std::tolower(c);
     });
+    auto backend_split = strsplit(backend, '-');
     std::map<std::string, std::string> backend_map;
     backend_map["isa"] = "libspike_driver.so";
     backend_map["spike"] = "libspike_driver.so";
@@ -89,15 +107,15 @@ vt_api_t load_backend() {
     backend_map["gpgpu"] = "librtlsim_driver.so";
     backend_map["cycle"] = "libcyclesim_driver.so";
     backend_map["cyclesim"] = "libcyclesim_driver.so";
-    backend_map["gvm"] = "libgvm_driver.so";    
+    backend_map["gvm"] = "libgvm_driver.so";
     backend_map["simulator"] = "libcyclesim_driver.so";
     backend_map["systemc"] = "libcyclesim_driver.so";
 
     std::string backend_soname;
-    if (backend_map.find(backend) != backend_map.end()) {
-        backend_soname = backend_map[backend];
+    if (backend_map.count(backend_split[0])) {
+        backend_soname = backend_map[backend_split[0]];
     } else {
-        SPDLOG_ERROR("Unsupported VENTUS_BACKEND: {}", backend);
+        SPDLOG_ERROR("Unsupported VENTUS_BACKEND: {}, {}", backend, backend_split[0]);
         std::exit(EXIT_FAILURE);
     }
 
@@ -116,6 +134,31 @@ vt_api_t load_backend() {
     if (!handle) {
         SPDLOG_ERROR("dlopen failed to load backend library: {}", dlerror());
         std::exit(EXIT_FAILURE);
+    }
+
+    // 根据VENTUS_BACKEND指定使用有/无版本的RTL，覆写软链接 libVentusRTL.so
+    if (backend_soname == "librtlsim_driver.so" && backend_split.size() > 1) {
+        std::unordered_set<std::string> nocache = {"nocache", "withoutcache", "without"};
+        std::unordered_set<std::string> withcache = {"cache", "withcache", "with"};
+        auto create_symlink = [&](std::string soname) {
+            namespace fs = std::filesystem;
+            fs::path target = self_path / "libVentusRTL.so";
+            std::error_code err;
+            if (fs::exists(target, err) || fs::is_symlink(target, err)) {
+                fs::remove(target, err);
+            }
+            if (!err) {
+                fs::create_symlink(soname, target, err);
+            }
+            if (err) {
+                SPDLOG_ERROR("Ventus driver: ln -sf failed: {}", fs::filesystem_error("", err).what());
+            }
+        };
+        if (nocache.count(backend_split[1])) {
+            create_symlink("libVentusRTL-nocache.so");
+        } else if (withcache.count(backend_split[1])) {
+            create_symlink("libVentusRTL-withcache.so");
+        }
     }
 
     // 获取所有 API 的函数指针
