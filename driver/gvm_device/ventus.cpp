@@ -30,6 +30,7 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     auto env_waveform = std::getenv("VENTUS_WAVEFORM");
     auto env_waveform_begin = std::getenv("VENTUS_WAVEFORM_BEGIN");
     auto env_waveform_end = std::getenv("VENTUS_WAVEFORM_END");
+    auto env_waveform_filename = std::getenv("GVM_WAVEFORM_FILENAME");
     bool waveform_enable = false;
     uint64_t waveform_begin = UINT64_MAX; // default: not enable
     uint64_t waveform_end = 0;
@@ -48,7 +49,7 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     config.waveform.enable = waveform_enable;
     config.waveform.time_begin = waveform_begin;
     config.waveform.time_end = waveform_end;
-    config.waveform.filename = "waveform.gvm.fst";
+    config.waveform.filename = env_waveform_filename ? env_waveform_filename : "waveform.gvm.fst";
     config.snapshot.enable = false;
     config.log.console.enable = true;
     config.log.console.level = "trace";
