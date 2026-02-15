@@ -1,9 +1,11 @@
-// PTX-backed Ventus driver (vecadd-only)
+// PTX-backed Ventus driver (SBT prototype)
 //
-// This backend implements the vt_* driver ABI (ventus.h) by mapping Ventus 32-bit
-// device addresses into a single CUDA device heap and launching a PTX kernel.
+// This backend implements the vt_* driver ABI (ventus.h) by:
+// - loading Ventus RISC-V ELF PT_LOAD segments into device memory
+// - invoking `sbt_ptx` to translate a kernel function into PTX
+// - JIT-loading the PTX via CUDA Driver API and launching it
 //
-// Current scope: only the PoCL vecadd example.
+// Current scope: Rodinia bring-up (fail-fast on unsupported inputs).
 
 #include "ventus.h"
 
@@ -11,128 +13,226 @@
 
 #include <cuda.h>
 
+#include <dlfcn.h>
+
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <sstream>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <string>
+#include <string_view>
+#include <sys/wait.h>
+#include <unordered_map>
 #include <vector>
 
 namespace {
 
 // Ventus device pointers are 32-bit in this PoCL flow (see POCL_DEVICE_ADDRESS_BITS=32).
-// We model the "device address space" as an offset into a single CUDA device heap.
-static constexpr uint32_t kVentusBase = 0x90000000u;
-static constexpr size_t kHeapSizeBytes = 256ull * 1024 * 1024; // plenty for vecadd
+// We model the "device address space" as backing buffers for:
+// - [0x8000_0000, 0x9000_0000): ELF PT_LOAD segments (global, read-only-ish)
+// - [0x9000_0000, ...):        heap allocations (arg buffers, private, global buffers)
+static constexpr uint32_t kVentusElfBase = 0x80000000u;
+static constexpr uint32_t kVentusHeapBase = 0x90000000u;
+static constexpr size_t kElfSizeBytes = 256ull * 1024 * 1024;  // 0x8000_0000 .. 0x9000_0000
+static constexpr size_t kDefaultHeapSizeBytes = 1024ull * 1024 * 1024; // bring-up default: 1GiB
+
+static constexpr uint32_t kPerWarpWctxBytes = 1024u;  // must match sbt::ptx emitter
+static constexpr uint32_t kPerWarpStackBytes = 1024u; // must match sbt::ptx emitter
 
 static std::shared_ptr<spdlog::logger> logger;
 
-// PTX wrapper kernel for the OpenCL "vecadd" sample.
-// It consumes Ventus ABI metadata+arg-buffer from device memory and performs:
-//   c[gid] = a[gid] + b[gid]
-//
-// Params:
-// - heap_base: CUDA device pointer to the heap.
-// - knl_addr:  Ventus u32 address of the 64B kernel metadata buffer (CSR_KNL).
-static const char kVecaddPtx[] = R"PTX(
-.version 6.0
-.target sm_52
-.address_size 64
+namespace fs = std::filesystem;
 
-.visible .entry ventus_start(
-    .param .u64 heap_base,
-    .param .u32 knl_addr
-)
-{
-    .reg .pred  %p<4>;
-    .reg .b32   %r<32>;
-    .reg .b64   %rd<17>;
-    .reg .f32   %f<3>;
-
-    // Load params
-    ld.param.u64 %rd0, [heap_base];
-    ld.param.u32 %r0,  [knl_addr];
-
-    // Constants
-    mov.u32 %r1, 0x90000000;        // VENTUS_BASE
-
-    // Convert knl_addr (u32 Ventus) -> knl_ptr (u64 CUDA global)
-    sub.u32 %r2, %r0, %r1;          // knl_offset
-    cvt.u64.u32 %rd1, %r2;
-    add.u64 %rd2, %rd0, %rd1;       // knl_ptr
-
-    // Load metadata fields (all u32)
-    // KNL_ARG_BASE @ +4
-    add.u64 %rd3, %rd2, 4;
-    ld.global.u32 %r3, [%rd3];      // arg_base_u32
-
-    // KNL_GL_SIZE_X @ +12
-    add.u64 %rd4, %rd2, 12;
-    ld.global.u32 %r4, [%rd4];      // global_size_x (N)
-
-    // KNL_GL_OFFSET_X @ +36
-    add.u64 %rd6, %rd2, 36;
-    ld.global.u32 %r6, [%rd6];      // global_offset_x
-
-    // Compute linear_tid = ctaid.x * ntid.x + tid.x
-    mov.u32 %r7, %ctaid.x;
-    mov.u32 %r8, %ntid.x;
-    mov.u32 %r9, %tid.x;
-    mad.lo.u32 %r10, %r7, %r8, %r9; // linear_tid
-
-    // Guard: if linear_tid >= global_size_x return
-    setp.ge.u32 %p0, %r10, %r4;
-    @%p0 bra DONE;
-
-    // gid = linear_tid + global_offset_x
-    add.u32 %r11, %r10, %r6;
-
-    // Arg base pointer: arg_base_u32 -> arg_base_ptr
-    sub.u32 %r12, %r3, %r1;         // arg_base_offset
-    cvt.u64.u32 %rd7, %r12;
-    add.u64 %rd8, %rd0, %rd7;       // arg_base_ptr
-
-    // Load a/b/c Ventus pointers (u32) from arg buffer
-    ld.global.u32 %r13, [%rd8];     // a_ptr_u32
-    add.u64 %rd9, %rd8, 4;
-    ld.global.u32 %r14, [%rd9];     // b_ptr_u32
-    add.u64 %rd10, %rd8, 8;
-    ld.global.u32 %r15, [%rd10];    // c_ptr_u32
-
-    // byte_off = gid << 2
-    shl.b32 %r16, %r11, 2;
-
-    // a_ptr = heap_base + (a_ptr_u32 - VENTUS_BASE) + byte_off
-    sub.u32 %r17, %r13, %r1;
-    add.u32 %r18, %r17, %r16;
-    cvt.u64.u32 %rd11, %r18;
-    add.u64 %rd12, %rd0, %rd11;
-
-    // b_ptr
-    sub.u32 %r19, %r14, %r1;
-    add.u32 %r20, %r19, %r16;
-    cvt.u64.u32 %rd13, %r20;
-    add.u64 %rd14, %rd0, %rd13;
-
-    // c_ptr
-    sub.u32 %r21, %r15, %r1;
-    add.u32 %r22, %r21, %r16;
-    cvt.u64.u32 %rd15, %r22;
-    add.u64 %rd16, %rd0, %rd15;
-
-    // Load, add, store
-    ld.global.f32 %f0, [%rd12];
-    ld.global.f32 %f1, [%rd14];
-    add.rn.f32 %f2, %f0, %f1;
-    st.global.f32 [%rd16], %f2;
-
-DONE:
-    ret;
+static std::optional<std::string> getenv_str(const char *name) {
+    if (name == nullptr) return std::nullopt;
+    const char *v = std::getenv(name);
+    if (v == nullptr || v[0] == '\0') return std::nullopt;
+    return std::string(v);
 }
-)PTX";
+
+static std::string shell_quote(const std::string &s) {
+    std::string out;
+    out.reserve(s.size() + 2);
+    out.push_back('\'');
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out.push_back(c);
+    }
+    out.push_back('\'');
+    return out;
+}
+
+static int run_cmd_capture(const std::string &cmd, std::string *out) {
+    if (out) out->clear();
+    FILE *fp = popen((cmd + " 2>&1").c_str(), "r");
+    if (fp == nullptr) return -1;
+    char buf[4096];
+    while (std::fgets(buf, sizeof(buf), fp)) {
+        if (out) out->append(buf);
+    }
+    const int st = pclose(fp);
+    if (WIFEXITED(st)) return WEXITSTATUS(st);
+    return -1;
+}
+
+static std::optional<fs::path> self_so_path() {
+    Dl_info info;
+    if (dladdr(reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(&self_so_path)), &info) == 0) return std::nullopt;
+    if (info.dli_fname == nullptr || info.dli_fname[0] == '\0') return std::nullopt;
+    try {
+        return fs::weakly_canonical(fs::path(info.dli_fname));
+    } catch (...) {
+        return fs::path(info.dli_fname);
+    }
+}
+
+static std::optional<fs::path> find_gpusim_root() {
+    const auto so = self_so_path();
+    if (!so) return std::nullopt;
+    fs::path p = so->parent_path();
+    for (int i = 0; i < 16; ++i) {
+        if (p.filename() == "ventus-env") return p.parent_path();
+        if (!p.has_parent_path()) break;
+        p = p.parent_path();
+    }
+    return std::nullopt;
+}
+
+static constexpr size_t kMaxHeapSizeBytes = (0x1'0000'0000ull - kVentusHeapBase);
+
+static size_t parse_size_mb(const char *env_name, size_t fallback_mb) {
+    const auto v = getenv_str(env_name);
+    if (!v) return fallback_mb;
+    try {
+        return static_cast<size_t>(std::stoull(*v));
+    } catch (...) {
+        return fallback_mb;
+    }
+}
+
+static size_t heap_size_bytes() {
+    size_t mb = parse_size_mb("VENTUS_PTX_HEAP_MB", kDefaultHeapSizeBytes / (1024ull * 1024ull));
+    mb = parse_size_mb("VENTUS_HEAP_MB", mb);
+    size_t bytes = mb * 1024ull * 1024ull;
+    if (bytes > kMaxHeapSizeBytes) bytes = kMaxHeapSizeBytes;
+    if (bytes == 0) bytes = 256ull * 1024 * 1024;
+    return bytes;
+}
+
+static int parse_int_env(const char *name, int fallback) {
+    const auto v = getenv_str(name);
+    if (!v) return fallback;
+    try {
+        return std::stoi(*v);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+static uint64_t file_mtime_u64(const fs::path &p) {
+    try {
+        const auto t = fs::last_write_time(p);
+        return static_cast<uint64_t>(t.time_since_epoch().count());
+    } catch (...) {
+        return 0;
+    }
+}
+
+static uint64_t fnv1a64(std::string_view s) {
+    uint64_t h = 1469598103934665603ull;
+    for (unsigned char c : s) {
+        h ^= static_cast<uint64_t>(c);
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+static std::string hex_u64(uint64_t x) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "0x%016llx", static_cast<unsigned long long>(x));
+    return std::string(buf);
+}
+
+static std::string sanitize_filename_component(const std::string &s) {
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '_' || c == '-' || c == '.') out.push_back(static_cast<char>(c));
+        else out.push_back('_');
+    }
+    if (out.empty()) out = "kernel";
+    return out;
+}
+
+static fs::path resolve_encoding_h_path() {
+    if (const auto v = getenv_str("GPU_SBT_ENCODING_H")) return fs::path(*v);
+    if (const auto root = find_gpusim_root()) {
+        const fs::path p = *root / "ventus-env" / "spike" / "riscv" / "encoding.h";
+        if (fs::exists(p)) return p;
+    }
+    return fs::path("ventus-env/spike/riscv/encoding.h");
+}
+
+static std::string resolve_sbt_ptx_path() {
+    if (const auto v = getenv_str("GPU_SBT_PTX")) return *v;
+    if (const auto v = getenv_str("VENTUS_SBT_PTX")) return *v;
+    if (const auto root = find_gpusim_root()) {
+        const fs::path p = *root / "build" / "sbt_ptx";
+        if (fs::exists(p)) return p.string();
+    }
+    return "sbt_ptx";
+}
+
+static fs::path resolve_ptx_cache_dir() {
+    if (const auto v = getenv_str("GPU_SBT_PTX_CACHE_DIR")) return fs::path(*v);
+    return fs::path("/tmp/ventus_sbt_ptx");
+}
+
+static bool read_file_to_string(const fs::path &p, std::string *out) {
+    if (out == nullptr) return false;
+    std::ifstream f(p, std::ios::binary);
+    if (!f) return false;
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    *out = ss.str();
+    return true;
+}
+
+static bool generate_ptx_via_sbt(const fs::path &elf, const std::string &kernel, int sm, const fs::path &out_ptx, std::string *log) {
+    try {
+        fs::create_directories(out_ptx.parent_path());
+    } catch (...) {
+        // ignore; will fail later if path is invalid.
+    }
+
+    const std::string sbt_ptx = resolve_sbt_ptx_path();
+    const fs::path encoding_h = resolve_encoding_h_path();
+
+    std::ostringstream cmd;
+    cmd << shell_quote(sbt_ptx) << " " << shell_quote(elf.string());
+    cmd << " --func " << shell_quote(kernel);
+    cmd << " --out " << shell_quote(out_ptx.string());
+    cmd << " --sm " << sm;
+    cmd << " --encoding-h " << shell_quote(encoding_h.string());
+    cmd << " --require-known";
+    if (getenv_str("GPU_SBT_PTX_NO_COMMENTS")) cmd << " --no-comments";
+
+    SPDLOG_LOGGER_DEBUG(logger, "run sbt_ptx: {}", cmd.str());
+    const int rc = run_cmd_capture(cmd.str(), log);
+    if (rc != 0) return false;
+    return fs::exists(out_ptx);
+}
 
 // Convert CUDA Driver API errors to a readable string for logging.
 static std::string cu_err(CUresult r) {
@@ -160,29 +260,153 @@ static uint64_t align_up_u64(uint64_t x, uint64_t a) {
 struct PtxDevice {
     CUdevice cu_dev{};
     CUcontext cu_ctx{};
-    CUmodule cu_mod{};
-    CUfunction cu_fun_vecadd{};
+
+    CUdeviceptr elf_base{};
+    size_t elf_size{};
 
     CUdeviceptr heap_base{};
     size_t heap_size{};
 
-    uint32_t next_vaddr = kVentusBase;
+    uint32_t next_vaddr = kVentusHeapBase;
 
     // Optional: track allocations for debugging.
     std::vector<std::pair<uint32_t, uint32_t>> allocs;
 
+    // Kernel image bookkeeping (PoCL currently passes kernel_id=0, but keep it generic).
+    std::unordered_map<uint64_t, std::string> elf_path_by_kernel_id;
+    std::string last_elf_path;
+
+    // SBT PTX JIT cache: key = "<elf>|<kernel>|sm=<cc>"
+    struct KernelJitEntry final {
+        CUmodule mod{};
+        CUfunction fun{};
+        uint64_t elf_mtime = 0;
+        std::string ptx_path;
+    };
+    std::unordered_map<std::string, KernelJitEntry> jit_cache;
+
+    int sm = 75;
+
     std::mutex mu;
 };
 
-// Map a Ventus 32-bit virtual address to an offset into heap_base.
-static uint32_t vaddr_to_offset(uint64_t vaddr) {
-    return static_cast<uint32_t>(vaddr) - kVentusBase;
+static bool map_vaddr_to_devptr(PtxDevice *dev, uint64_t vaddr, uint64_t size, CUdeviceptr *out) {
+    if (out == nullptr) return false;
+    if (size == 0) return false;
+
+    if (vaddr >= kVentusHeapBase) {
+        uint64_t off = vaddr - kVentusHeapBase;
+        if (off + size > dev->heap_size) return false;
+        *out = dev->heap_base + static_cast<size_t>(off);
+        return true;
+    }
+    if (vaddr >= kVentusElfBase) {
+        uint64_t off = vaddr - kVentusElfBase;
+        if (off + size > dev->elf_size) return false;
+        *out = dev->elf_base + static_cast<size_t>(off);
+        return true;
+    }
+    return false;
+}
+
+static bool get_or_jit_kernel(PtxDevice *dev, const fs::path &elf_path_in, const std::string &kernel, CUfunction *out_fun) {
+    if (dev == nullptr || out_fun == nullptr) return false;
+    if (kernel.empty()) return false;
+
+    fs::path elf_path = elf_path_in;
+    try {
+        elf_path = fs::weakly_canonical(elf_path_in);
+    } catch (...) {
+        // keep as-is
+    }
+
+    const uint64_t mtime = file_mtime_u64(elf_path);
+    const std::string key = elf_path.string() + "|" + kernel + "|sm=" + std::to_string(dev->sm);
+
+    std::lock_guard<std::mutex> lock(dev->mu);
+
+    auto it = dev->jit_cache.find(key);
+    if (it != dev->jit_cache.end() && it->second.fun && it->second.elf_mtime == mtime) {
+        SPDLOG_LOGGER_DEBUG(logger, "jit cache hit: kernel='{}' elf='{}' ptx='{}'", kernel, elf_path.string(), it->second.ptx_path);
+        *out_fun = it->second.fun;
+        return true;
+    }
+    if (it != dev->jit_cache.end()) {
+        if (it->second.mod) cuModuleUnload(it->second.mod);
+        dev->jit_cache.erase(it);
+    }
+
+    const fs::path cache_dir = resolve_ptx_cache_dir();
+    const std::string safe_kernel = sanitize_filename_component(kernel);
+    const uint64_t h = fnv1a64(key + "|mtime=" + std::to_string(mtime));
+    const fs::path out_ptx = cache_dir / (safe_kernel + ".sm" + std::to_string(dev->sm) + "." + hex_u64(h) + ".ptx");
+
+    SPDLOG_LOGGER_INFO(logger, "jit translate: kernel='{}' elf='{}' -> {}", kernel, elf_path.string(), out_ptx.string());
+    std::string gen_log;
+    if (!generate_ptx_via_sbt(elf_path, kernel, dev->sm, out_ptx, &gen_log)) {
+        SPDLOG_LOGGER_ERROR(logger, "sbt_ptx failed for kernel='{}' elf='{}'\n{}", kernel, elf_path.string(), gen_log);
+        return false;
+    }
+
+    std::string ptx;
+    if (!read_file_to_string(out_ptx, &ptx)) {
+        SPDLOG_LOGGER_ERROR(logger, "failed to read generated PTX: {}", out_ptx.string());
+        return false;
+    }
+
+    CUmodule mod{};
+    char err_log[8192] = {0};
+    char info_log[8192] = {0};
+    CUjit_option opts[] = {
+        CU_JIT_ERROR_LOG_BUFFER,
+        CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES,
+        CU_JIT_INFO_LOG_BUFFER,
+        CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES,
+        CU_JIT_LOG_VERBOSE,
+        CU_JIT_TARGET_FROM_CUCONTEXT,
+    };
+    void *vals[] = {
+        err_log,
+        reinterpret_cast<void *>(static_cast<uintptr_t>(sizeof(err_log))),
+        info_log,
+        reinterpret_cast<void *>(static_cast<uintptr_t>(sizeof(info_log))),
+        reinterpret_cast<void *>(1),
+        reinterpret_cast<void *>(1),
+    };
+    static_assert(sizeof(opts) / sizeof(opts[0]) == sizeof(vals) / sizeof(vals[0]));
+
+    CUresult r = cuModuleLoadDataEx(&mod, ptx.c_str(), static_cast<unsigned>(sizeof(opts) / sizeof(opts[0])), opts, vals);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuModuleLoadDataEx(JIT) failed: {}\ninfo:\n{}\nerror:\n{}", cu_err(r), info_log, err_log);
+        return false;
+    }
+    if (getenv_str("VENTUS_PTX_JIT_INFO")) {
+        SPDLOG_LOGGER_INFO(logger, "ptx jit info (kernel='{}'):\n{}", kernel, info_log);
+    }
+
+    CUfunction fun{};
+    r = cuModuleGetFunction(&fun, mod, kernel.c_str());
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuModuleGetFunction failed: {}", cu_err(r));
+        cuModuleUnload(mod);
+        return false;
+    }
+
+    PtxDevice::KernelJitEntry ent;
+    ent.mod = mod;
+    ent.fun = fun;
+    ent.elf_mtime = mtime;
+    ent.ptx_path = out_ptx.string();
+    dev->jit_cache.emplace(key, ent);
+
+    *out_fun = fun;
+    return true;
 }
 
 } // namespace
 
 // Initialize CUDA and allocate a single device heap for all subsequent vt_buf_alloc.
-// The heap is zeroed to keep behavior deterministic for ABI buffers.
+// Note: we zero allocations in vt_buf_alloc; the whole heap is not eagerly cleared.
 extern "C" int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
 
@@ -211,39 +435,49 @@ extern "C" int vt_dev_open(vt_device_h *hdevice) {
         return -1;
     }
 
+    int cc_major = 0, cc_minor = 0;
+    const CUresult rmaj = cuDeviceGetAttribute(&cc_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev->cu_dev);
+    const CUresult rmin = cuDeviceGetAttribute(&cc_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, dev->cu_dev);
+    if (rmaj != CUDA_SUCCESS || rmin != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_WARN(logger, "cuDeviceGetAttribute(CC) failed: major={} minor={} (fallback sm=75)", cu_err(rmaj), cu_err(rmin));
+        dev->sm = 75;
+    } else {
+        const int device_sm = cc_major * 10 + cc_minor;
+        // PTX emitter currently outputs ".version 7.0". Keep target conservative for compatibility.
+        const int env_sm = parse_int_env("VENTUS_PTX_SM", parse_int_env("GPU_SBT_SM", 0));
+        if (env_sm > 0) dev->sm = env_sm;
+        else dev->sm = std::min(device_sm, 75);
+    }
+
     r = cuCtxSetCurrent(dev->cu_ctx);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
         return -1;
     }
 
-    dev->heap_size = kHeapSizeBytes;
+    dev->elf_size = kElfSizeBytes;
+    r = cuMemAlloc(&dev->elf_base, dev->elf_size);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuMemAlloc(elf) failed: {}", cu_err(r));
+        return -1;
+    }
+    r = cuMemsetD8(dev->elf_base, 0, dev->elf_size);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8(elf) failed: {}", cu_err(r));
+        return -1;
+    }
+
+    dev->heap_size = heap_size_bytes();
     r = cuMemAlloc(&dev->heap_base, dev->heap_size);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuMemAlloc failed: {}", cu_err(r));
         return -1;
     }
 
-    r = cuMemsetD8(dev->heap_base, 0, dev->heap_size);
-    if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8 failed: {}", cu_err(r));
-        return -1;
-    }
-
-    r = cuModuleLoadDataEx(&dev->cu_mod, kVecaddPtx, 0, nullptr, nullptr);
-    if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuModuleLoadDataEx failed: {}", cu_err(r));
-        return -1;
-    }
-
-    r = cuModuleGetFunction(&dev->cu_fun_vecadd, dev->cu_mod, "ventus_start");
-    if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuModuleGetFunction failed: {}", cu_err(r));
-        return -1;
-    }
-
-    *hdevice = dev.release();
-    SPDLOG_LOGGER_INFO(logger, "ptx_device opened (heap_size={} bytes)", kHeapSizeBytes);
+    PtxDevice *raw = dev.release();
+    *hdevice = raw;
+    SPDLOG_LOGGER_INFO(logger, "ptx_device opened (sm={}, elf_size={} bytes, heap_size={} bytes)", static_cast<int>(raw->sm),
+                       static_cast<unsigned long long>(raw->elf_size), static_cast<unsigned long long>(raw->heap_size));
     return 0;
 }
 
@@ -255,14 +489,21 @@ extern "C" int vt_dev_close(vt_device_h hdevice) {
 
     cuCtxSetCurrent(dev->cu_ctx);
 
-    if (dev->cu_mod) {
-        cuModuleUnload(dev->cu_mod);
-        dev->cu_mod = nullptr;
+    for (auto &kv : dev->jit_cache) {
+        if (kv.second.mod) cuModuleUnload(kv.second.mod);
+        kv.second.mod = nullptr;
+        kv.second.fun = nullptr;
     }
+    dev->jit_cache.clear();
 
     if (dev->heap_base) {
         cuMemFree(dev->heap_base);
         dev->heap_base = 0;
+    }
+
+    if (dev->elf_base) {
+        cuMemFree(dev->elf_base);
+        dev->elf_base = 0;
     }
 
     if (dev->cu_ctx) {
@@ -307,7 +548,7 @@ extern "C" int vt_root_mem_free(vt_device_h hdevice, int taskID) {
 
 // Allocate a Ventus "device pointer".
 //
-// For this backend we return a 32-bit virtual address in [kVentusBase, kVentusBase+heap_size)
+// For this backend we return a 32-bit virtual address in [kVentusHeapBase, kVentusHeapBase+heap_size)
 // and back it with bytes inside `heap_base`.
 extern "C" int vt_buf_alloc(
     vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID,
@@ -328,9 +569,20 @@ extern "C" int vt_buf_alloc(
     uint64_t next = v + aligned;
 
     // Offset must fit into the heap and 32-bit space.
-    uint64_t off = static_cast<uint32_t>(v) - kVentusBase;
+    uint64_t off = static_cast<uint32_t>(v) - kVentusHeapBase;
     if (off + aligned > dev->heap_size) {
         SPDLOG_LOGGER_ERROR(logger, "vt_buf_alloc out of heap: size=0x{:x}", size);
+        return -1;
+    }
+
+    CUresult r = cuCtxSetCurrent(dev->cu_ctx);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
+        return -1;
+    }
+    r = cuMemsetD8(dev->heap_base + static_cast<size_t>(off), 0, aligned);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8(alloc) failed: {}", cu_err(r));
         return -1;
     }
 
@@ -344,12 +596,28 @@ extern "C" int vt_buf_alloc(
 extern "C" int vt_buf_free(
     vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID
 ) {
-    (void)hdevice;
-    (void)size;
-    (void)vaddr;
     (void)taskID;
     (void)kernelID;
-    // No-op for now.
+    if (hdevice == nullptr || vaddr == nullptr || *vaddr == 0 || size == 0) return 0;
+
+    auto *dev = static_cast<PtxDevice *>(hdevice);
+    std::lock_guard<std::mutex> lock(dev->mu);
+
+    const uint32_t va = static_cast<uint32_t>(*vaddr);
+    const uint32_t aligned = static_cast<uint32_t>(align_up_u64(size, 16));
+
+    if (!dev->allocs.empty()) {
+        const auto [last_va, last_sz] = dev->allocs.back();
+        if (last_va == va && last_sz == aligned) {
+            dev->allocs.pop_back();
+            dev->next_vaddr = va;
+            *vaddr = 0;
+            return 0;
+        }
+    }
+
+    SPDLOG_LOGGER_WARN(logger, "vt_buf_free non-LIFO (ignored): vaddr=0x{:x} size=0x{:x}", va, static_cast<uint64_t>(size));
+    *vaddr = 0;
     return 0;
 }
 
@@ -359,7 +627,7 @@ extern "C" int vt_one_buf_free(
     return vt_buf_free(hdevice, size, vaddr, taskID, kernelID);
 }
 
-// Copy from host to the CUDA heap at (heap_base + (dev_vaddr - kVentusBase)).
+// Copy from host to a Ventus backing buffer at dev_vaddr.
 extern "C" int vt_copy_to_dev(
     vt_device_h hdevice, uint64_t dev_vaddr, const void *src_addr, uint64_t size, uint64_t taskID,
     uint64_t kernelID
@@ -376,10 +644,13 @@ extern "C" int vt_copy_to_dev(
         return -1;
     }
 
-    uint32_t off = vaddr_to_offset(dev_vaddr);
-    if (static_cast<uint64_t>(off) + size > dev->heap_size) return -1;
+    CUdeviceptr dst{};
+    if (!map_vaddr_to_devptr(dev, dev_vaddr, size, &dst)) {
+        SPDLOG_LOGGER_ERROR(logger, "vt_copy_to_dev unsupported vaddr=0x{:x} size=0x{:x}", dev_vaddr, size);
+        return -1;
+    }
 
-    r = cuMemcpyHtoD(dev->heap_base + off, src_addr, size);
+    r = cuMemcpyHtoD(dst, src_addr, size);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuMemcpyHtoD failed: {}", cu_err(r));
         return -1;
@@ -388,7 +659,7 @@ extern "C" int vt_copy_to_dev(
     return 0;
 }
 
-// Copy from the CUDA heap at (heap_base + (dev_vaddr - kVentusBase)) back to host.
+// Copy from a Ventus backing buffer at dev_vaddr back to host.
 extern "C" int vt_copy_from_dev(
     vt_device_h hdevice, uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint64_t taskID,
     uint64_t kernelID
@@ -405,10 +676,13 @@ extern "C" int vt_copy_from_dev(
         return -1;
     }
 
-    uint32_t off = vaddr_to_offset(dev_vaddr);
-    if (static_cast<uint64_t>(off) + size > dev->heap_size) return -1;
+    CUdeviceptr src{};
+    if (!map_vaddr_to_devptr(dev, dev_vaddr, size, &src)) {
+        SPDLOG_LOGGER_ERROR(logger, "vt_copy_from_dev unsupported vaddr=0x{:x} size=0x{:x}", dev_vaddr, size);
+        return -1;
+    }
 
-    r = cuMemcpyDtoH(dst_addr, dev->heap_base + off, size);
+    r = cuMemcpyDtoH(dst_addr, src, size);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuMemcpyDtoH failed: {}", cu_err(r));
         return -1;
@@ -428,18 +702,26 @@ extern "C" int vt_upload_kernel_bytes(vt_device_h device, const void *content, u
 
 // Upload a Ventus kernel image (RISC-V ELF) into the heap.
 //
-// Even though this backend does not execute the ELF today (vecadd is executed via PTX),
-// keeping the PT_LOAD copy semantics helps future bring-up and debugging.
+// We keep PT_LOAD copy semantics because translated PTX may read ELF globals/rodata.
 extern "C" int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int kernelID) {
-    (void)kernelID;
     if (hdevice == nullptr || filename == nullptr) return -1;
 
     auto *dev = static_cast<PtxDevice *>(hdevice);
 
+    {
+        std::lock_guard<std::mutex> lock(dev->mu);
+        try {
+            dev->last_elf_path = fs::weakly_canonical(fs::path(filename)).string();
+        } catch (...) {
+            dev->last_elf_path = filename;
+        }
+        dev->elf_path_by_kernel_id[static_cast<uint64_t>(kernelID)] = dev->last_elf_path;
+    }
+
     // Keep ABI-compatible ELF loading semantics: PT_LOAD segments are copied to vaddr.
     auto blocks = get_data_from_elf(filename, logger);
     if (blocks.empty()) {
-        SPDLOG_LOGGER_WARN(logger, "vt_upload_kernel_file: no PT_LOAD blocks loaded from {} (ignored for vecadd-only)", filename);
+        SPDLOG_LOGGER_WARN(logger, "vt_upload_kernel_file: no PT_LOAD blocks loaded from {}", filename);
         return 0;
     }
 
@@ -451,19 +733,30 @@ extern "C" int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, 
 
     for (const auto &b : blocks) {
         if (b.memsz == 0) continue;
-        if (b.vaddr < kVentusBase) {
-            // This backend only supports data addresses in the heap-mapped region.
-            SPDLOG_LOGGER_WARN(logger, "ELF segment vaddr 0x{:x} below VENTUS_BASE, skipping", b.vaddr);
+
+        CUdeviceptr base{};
+        uint64_t off = 0;
+        size_t region_size = 0;
+        if (b.vaddr >= kVentusHeapBase) {
+            base = dev->heap_base;
+            off = b.vaddr - kVentusHeapBase;
+            region_size = dev->heap_size;
+        } else if (b.vaddr >= kVentusElfBase) {
+            base = dev->elf_base;
+            off = b.vaddr - kVentusElfBase;
+            region_size = dev->elf_size;
+        } else {
+            SPDLOG_LOGGER_WARN(logger, "ELF segment vaddr 0x{:x} below ELF_BASE, skipping", b.vaddr);
             continue;
         }
-        uint32_t off = static_cast<uint32_t>(b.vaddr) - kVentusBase;
-        if (static_cast<uint64_t>(off) + b.memsz > dev->heap_size) {
-            SPDLOG_LOGGER_ERROR(logger, "ELF segment out of heap: vaddr=0x{:x} memsz=0x{:x}", b.vaddr, b.memsz);
+
+        if (off + b.memsz > region_size) {
+            SPDLOG_LOGGER_ERROR(logger, "ELF segment out of backing: vaddr=0x{:x} memsz=0x{:x}", b.vaddr, b.memsz);
             return -1;
         }
 
         if (!b.data.empty()) {
-            r = cuMemcpyHtoD(dev->heap_base + off, b.data.data(), b.data.size());
+            r = cuMemcpyHtoD(base + static_cast<size_t>(off), b.data.data(), b.data.size());
             if (r != CUDA_SUCCESS) {
                 SPDLOG_LOGGER_ERROR(logger, "cuMemcpyHtoD(elf) failed: {}", cu_err(r));
                 return -1;
@@ -471,18 +764,24 @@ extern "C" int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, 
         }
         if (b.memsz > b.data.size()) {
             size_t zlen = b.memsz - b.data.size();
-            r = cuMemsetD8(dev->heap_base + off + b.data.size(), 0, zlen);
+            r = cuMemsetD8(base + static_cast<size_t>(off) + b.data.size(), 0, zlen);
             if (r != CUDA_SUCCESS) {
                 SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8(elf) failed: {}", cu_err(r));
                 return -1;
             }
+        }
+
+        if (b.vaddr >= kVentusHeapBase) {
+            const uint64_t end = b.vaddr + b.memsz;
+            std::lock_guard<std::mutex> lock(dev->mu);
+            if (end > dev->next_vaddr) dev->next_vaddr = static_cast<uint32_t>(align_up_u64(end, 16));
         }
     }
 
     return 0;
 }
 
-// Launch the PTX wrapper kernel.
+// Launch a translated PTX kernel.
 //
 // PoCL passes a driver-level `vt_kernel_metadata_t` which includes:
 // - kernel_size[]: number of work-groups (maps to CUDA grid dim)
@@ -501,13 +800,31 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
         return -1;
     }
 
-    // vecadd-only scope
-    if (metaData->kernel_name && std::string(metaData->kernel_name) != "vecadd") {
-        SPDLOG_LOGGER_ERROR(logger, "ptx_device only supports kernel vecadd (got '{}')", metaData->kernel_name);
+    if (metaData->kernel_name == nullptr || metaData->kernel_name[0] == '\0') {
+        SPDLOG_LOGGER_ERROR(logger, "vt_start: kernel_name is null/empty");
+        return -1;
+    }
+    const std::string kernel = metaData->kernel_name;
+
+    std::string elf_path;
+    {
+        std::lock_guard<std::mutex> lock(dev->mu);
+        auto it = dev->elf_path_by_kernel_id.find(metaData->kernel_id);
+        if (it != dev->elf_path_by_kernel_id.end()) elf_path = it->second;
+        else elf_path = dev->last_elf_path;
+    }
+    if (elf_path.empty()) {
+        SPDLOG_LOGGER_ERROR(logger, "vt_start: no ELF uploaded for kernel_id={}", metaData->kernel_id);
         return -1;
     }
 
-    uint32_t knl_addr = static_cast<uint32_t>(metaData->metaDataBaseAddr);
+    CUfunction fun{};
+    if (!get_or_jit_kernel(dev, fs::path(elf_path), kernel, &fun)) {
+        SPDLOG_LOGGER_ERROR(logger, "vt_start: JIT failed for kernel='{}' elf='{}'", kernel, elf_path);
+        return -1;
+    }
+
+    uint32_t knl_vaddr = static_cast<uint32_t>(metaData->metaDataBaseAddr);
 
     unsigned grid_x = static_cast<unsigned>(metaData->kernel_size[0]);
     unsigned grid_y = static_cast<unsigned>(metaData->kernel_size[1]);
@@ -517,17 +834,48 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
     unsigned block_y = static_cast<unsigned>(metaData->num_thread_local[1]);
     unsigned block_z = static_cast<unsigned>(metaData->num_thread_local[2]);
 
-    void *params[] = {&dev->heap_base, &knl_addr};
+    const uint64_t threads = static_cast<uint64_t>(block_x) * block_y * block_z;
+    uint64_t warps = metaData->wg_size;
+    if (warps == 0) warps = (threads + 31) >> 5;
+
+    const uint64_t wctx_bytes = warps * kPerWarpWctxBytes;
+    const uint64_t stack_bytes = warps * kPerWarpStackBytes;
+    const uint64_t lds_bytes = align_up_u64(metaData->ldsSize, 16);
+    const uint64_t shmem_bytes_u64 = wctx_bytes + stack_bytes + lds_bytes;
+    if (shmem_bytes_u64 > std::numeric_limits<unsigned>::max()) {
+        SPDLOG_LOGGER_ERROR(logger, "dynamic shared too large: {} bytes", shmem_bytes_u64);
+        return -1;
+    }
+
+    int max_shmem = 0;
+    CUresult r_sh = cuDeviceGetAttribute(&max_shmem, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN, dev->cu_dev);
+    if (r_sh != CUDA_SUCCESS || max_shmem == 0) {
+        r_sh = cuDeviceGetAttribute(&max_shmem, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK, dev->cu_dev);
+    }
+    if (r_sh == CUDA_SUCCESS && max_shmem > 0 && shmem_bytes_u64 > static_cast<uint64_t>(max_shmem)) {
+        SPDLOG_LOGGER_ERROR(logger, "dynamic shared exceeds device limit: need={} max={}", shmem_bytes_u64, max_shmem);
+        return -1;
+    }
+
+    // If we need > default shared limit, try to opt-in (best-effort).
+    if (shmem_bytes_u64 > 48ull * 1024) {
+        cuFuncSetAttribute(fun, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, static_cast<int>(shmem_bytes_u64));
+    }
+
+    CUdeviceptr elf_base = dev->elf_base;
+    CUdeviceptr heap_base = dev->heap_base;
+    void *params[] = {&elf_base, &heap_base, &knl_vaddr};
 
     r = cuLaunchKernel(
-        dev->cu_fun_vecadd,
+        fun,
         grid_x, grid_y, grid_z,
         block_x, block_y, block_z,
-        0, nullptr,
+        static_cast<unsigned>(shmem_bytes_u64), nullptr,
         params, nullptr
     );
     if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuLaunchKernel failed: {}", cu_err(r));
+        SPDLOG_LOGGER_ERROR(logger, "cuLaunchKernel failed: {} (kernel='{}' elf='{}' shmem={} grid={}x{}x{} block={}x{}x{})",
+                            cu_err(r), kernel, elf_path, shmem_bytes_u64, grid_x, grid_y, grid_z, block_x, block_y, block_z);
         return -1;
     }
 

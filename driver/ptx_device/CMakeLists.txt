@@ -7,6 +7,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../common)
 file(GLOB_RECURSE SRCS ventus.cpp)
 
 add_library(${PROJECT} SHARED ${SRCS})
+target_compile_features(${PROJECT} PRIVATE cxx_std_20)
 
 # CUDA Driver API comes from NVIDIA driver (libcuda.so). Headers typically come from CUDA toolkit.
 find_package(CUDAToolkit REQUIRED)

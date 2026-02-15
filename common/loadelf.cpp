@@ -1,6 +1,7 @@
 #include "loadelf.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <gelf.h>
 #include <libelf.h>
@@ -91,4 +92,80 @@ std::vector<MemBlock> get_data_from_elf(const char *filename, std::shared_ptr<sp
     elf_end(e);
     close(fd);
     return blocks;
+}
+
+std::optional<ElfSection> get_section_from_elf(
+    const char *filename, const char *section_name, std::shared_ptr<spdlog::logger> logger
+) {
+    if (filename == nullptr || section_name == nullptr) return std::nullopt;
+
+    if (elf_version(EV_CURRENT) == EV_NONE) {
+        logger->error("ELF: cannot initialize libelf");
+        return std::nullopt;
+    }
+
+    int fd = open(filename, O_RDONLY);
+    if (fd < 0) {
+        const char *errstr = strerrordesc_np(errno);
+        logger->error("ELF: cannot open file '{}': {}", filename, errstr);
+        return std::nullopt;
+    }
+
+    Elf *e = elf_begin(fd, ELF_C_READ, nullptr);
+    if (!e) {
+        logger->error("ELF: elf_begin failed: {}", elf_errmsg(-1));
+        close(fd);
+        return std::nullopt;
+    }
+
+    size_t shstrndx = 0;
+    if (elf_getshdrstrndx(e, &shstrndx) != 0) {
+        logger->error("ELF: elf_getshdrstrndx failed: {}", elf_errmsg(-1));
+        elf_end(e);
+        close(fd);
+        return std::nullopt;
+    }
+
+    for (Elf_Scn *scn = elf_nextscn(e, nullptr); scn != nullptr; scn = elf_nextscn(e, scn)) {
+        GElf_Shdr shdr;
+        if (gelf_getshdr(scn, &shdr) == nullptr) {
+            logger->error("ELF: gelf_getshdr failed: {}", elf_errmsg(-1));
+            elf_end(e);
+            close(fd);
+            return std::nullopt;
+        }
+
+        const char *name = elf_strptr(e, shstrndx, shdr.sh_name);
+        if (name == nullptr) continue;
+
+        if (std::strcmp(name, section_name) != 0) continue;
+
+        ElfSection out;
+        out.vaddr = shdr.sh_addr;
+        out.data.reserve(shdr.sh_size);
+
+        for (Elf_Data *data = elf_getdata(scn, nullptr); data != nullptr; data = elf_getdata(scn, data)) {
+            if (data->d_buf == nullptr || data->d_size == 0) continue;
+            const auto *buf = static_cast<const uint8_t *>(data->d_buf);
+            out.data.insert(out.data.end(), buf, buf + data->d_size);
+        }
+
+        if (out.data.size() != shdr.sh_size) {
+            logger->warn(
+                "ELF: section '{}' size mismatch: sh_size={} collected={}",
+                section_name,
+                static_cast<uint64_t>(shdr.sh_size),
+                static_cast<uint64_t>(out.data.size())
+            );
+        }
+
+        elf_end(e);
+        close(fd);
+        return out;
+    }
+
+    logger->error("ELF: section '{}' not found in '{}'", section_name, filename);
+    elf_end(e);
+    close(fd);
+    return std::nullopt;
 }
