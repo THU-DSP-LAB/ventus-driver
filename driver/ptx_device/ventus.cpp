@@ -825,6 +825,16 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
     }
 
     uint32_t knl_vaddr = static_cast<uint32_t>(metaData->metaDataBaseAddr);
+    if (metaData->pdsBaseAddr > 0xFFFF'FFFFull) {
+        SPDLOG_LOGGER_ERROR(logger, "vt_start: pdsBaseAddr out of u32 range: {}", hex_u64(metaData->pdsBaseAddr));
+        return -1;
+    }
+    if (metaData->pdsSize > 0xFFFF'FFFFull) {
+        SPDLOG_LOGGER_ERROR(logger, "vt_start: pdsSize out of u32 range: {}", hex_u64(metaData->pdsSize));
+        return -1;
+    }
+    uint32_t pds_base_vaddr = static_cast<uint32_t>(metaData->pdsBaseAddr);
+    uint32_t pds_size_per_thread = static_cast<uint32_t>(metaData->pdsSize);
 
     unsigned grid_x = static_cast<unsigned>(metaData->kernel_size[0]);
     unsigned grid_y = static_cast<unsigned>(metaData->kernel_size[1]);
@@ -864,7 +874,7 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
 
     CUdeviceptr elf_base = dev->elf_base;
     CUdeviceptr heap_base = dev->heap_base;
-    void *params[] = {&elf_base, &heap_base, &knl_vaddr};
+    void *params[] = {&elf_base, &heap_base, &knl_vaddr, &pds_base_vaddr, &pds_size_per_thread};
 
     r = cuLaunchKernel(
         fun,
