@@ -59,8 +59,34 @@ extern int vt_dev_close(vt_device_h hdevice) {
     return 0;
 }
 int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *value) {
-    // TODO: Not implemented yet
-    return -1;
+    (void)hdevice;
+    if (value == nullptr) return -1;
+    ventus_cyclesim_param_id_t param = VENTUS_CYCLESIM_PARAM_NUM_SM;
+    switch (caps_id) {
+    case VT_CAPS_MAX_CORES:
+        param = VENTUS_CYCLESIM_PARAM_NUM_SM;
+        break;
+    case VT_CAPS_MAX_WARPS:
+        param = VENTUS_CYCLESIM_PARAM_NUM_WARP_PER_SM;
+        break;
+    case VT_CAPS_MAX_THREADS:
+        param = VENTUS_CYCLESIM_PARAM_NUM_THREAD_PER_WARP;
+        break;
+    case VT_CAPS_LOCAL_MEM_SIZE:
+        param = VENTUS_CYCLESIM_PARAM_LOCAL_MEM_SIZE;
+        break;
+    case VT_CAPS_MAX_WG_SLOTS:
+        param = VENTUS_CYCLESIM_PARAM_MAX_CTA_PER_SM;
+        break;
+    default:
+        SPDLOG_LOGGER_ERROR(logger, "vt_dev_caps: unknown caps_id {}", caps_id);
+        return -1;
+    }
+    if (ventus_cyclesim_get_param_u64(param, value) != 0) {
+        SPDLOG_LOGGER_ERROR(logger, "vt_dev_caps: query cyclesim param {} failed", static_cast<int>(param));
+        return -1;
+    }
+    return 0;
 }
 
 extern int vt_buf_alloc(

@@ -92,6 +92,8 @@ int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *value) {
         GET_PARAM("num_thread");
     case VT_CAPS_LOCAL_MEM_SIZE:
         GET_PARAM("sharemem_size");
+    case VT_CAPS_MAX_WG_SLOTS:
+        GET_PARAM("num_block");
     default:
         SPDLOG_LOGGER_ERROR(
             logger, "vt_dev_caps: unknown caps_id {} (or not implemented)", caps_id

@@ -50,6 +50,14 @@ static constexpr size_t kDefaultHeapSizeBytes = 1024ull * 1024 * 1024; // bring-
 static constexpr uint32_t kPerWarpWctxBytes = 1024u;  // must match sbt::ptx emitter
 static constexpr uint32_t kPerWarpStackBytes = 1024u; // must match sbt::ptx emitter
 
+// PTX backend models the Ventus execution shape (not raw CUDA hardware attributes).
+// Keep these values consistent with PoCL's pool sizing expectation and PTX bitmap logic.
+static constexpr uint64_t kPtxCapsMaxCores = 1;
+static constexpr uint64_t kPtxCapsMaxWarpsPerCore = 8;
+static constexpr uint64_t kPtxCapsMaxThreadsPerWarp = 32;
+static constexpr uint64_t kPtxCapsMaxWgSlotsPerCore = 8;
+static uint64_t g_ptx_caps_max_cores = kPtxCapsMaxCores;
+
 static std::shared_ptr<spdlog::logger> logger;
 
 namespace fs = std::filesystem;
@@ -451,6 +459,15 @@ extern "C" int vt_dev_open(vt_device_h *hdevice) {
         else dev->sm = std::min(device_sm, 75);
     }
 
+    int sm_count = 0;
+    const CUresult rsm = cuDeviceGetAttribute(&sm_count, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, dev->cu_dev);
+    if (rsm == CUDA_SUCCESS && sm_count > 0) {
+        g_ptx_caps_max_cores = static_cast<uint64_t>(sm_count);
+    } else {
+        g_ptx_caps_max_cores = kPtxCapsMaxCores;
+        SPDLOG_LOGGER_WARN(logger, "cuDeviceGetAttribute(SM_COUNT) failed: {} (fallback max_cores={})", cu_err(rsm), g_ptx_caps_max_cores);
+    }
+
     r = cuCtxSetCurrent(dev->cu_ctx);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
@@ -524,11 +541,17 @@ extern "C" int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *val
     if (value == nullptr) return -1;
 
     switch (caps_id) {
+    case VT_CAPS_MAX_CORES:
+        *value = g_ptx_caps_max_cores;
+        return 0;
     case VT_CAPS_MAX_WARPS:
-        *value = 8;
+        *value = kPtxCapsMaxWarpsPerCore;
         return 0;
     case VT_CAPS_MAX_THREADS:
-        *value = 32;
+        *value = kPtxCapsMaxThreadsPerWarp;
+        return 0;
+    case VT_CAPS_MAX_WG_SLOTS:
+        *value = kPtxCapsMaxWgSlotsPerCore;
         return 0;
     default:
         return -1;

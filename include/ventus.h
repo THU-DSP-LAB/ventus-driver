@@ -57,6 +57,7 @@ typedef struct vt_kernel_metadata_t {  // 这个metadata是供驱动使用的，
 #define VT_CAPS_LOCAL_MEM_SIZE    0x5
 #define VT_CAPS_ALLOC_BASE_ADDR   0x6
 #define VT_CAPS_KERNEL_BASE_ADDR  0x7
+#define VT_CAPS_MAX_WG_SLOTS      0x8
 
 #define MAX_TIMEOUT               (60*60*1000)   // 1hr 
 
