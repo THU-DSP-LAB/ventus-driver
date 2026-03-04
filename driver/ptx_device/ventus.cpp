@@ -106,7 +106,6 @@ static std::optional<fs::path> resolve_install_prefix() {
     // Expected install layout:
     //   <prefix>/lib/libptx_driver.so
     //   <prefix>/bin/sbt_ptx
-    //   <prefix>/share/ventus/...
     return libdir.parent_path();
 }
 
@@ -182,29 +181,6 @@ static std::string sanitize_filename_component(const std::string &s) {
     return out;
 }
 
-static fs::path resolve_encoding_h_path() {
-    if (const auto v = getenv_str("GPU_SBT_ENCODING_H")) return fs::path(*v);
-
-    const fs::path p = install_share_ventus_dir() / "spike" / "encoding.h";
-    if (fs::exists(p)) return p;
-    if (logger) {
-        SPDLOG_LOGGER_ERROR(logger,
-                            "cannot locate spike encoding.h under install prefix; expected: {} (set GPU_SBT_ENCODING_H to override)",
-                            p.string());
-    }
-    return p;
-}
-
-static fs::path resolve_spike_want_file() {
-    if (const auto v = getenv_str("GPU_SBT_WANT_FILE")) return fs::path(*v);
-    const fs::path p = install_share_ventus_dir() / "spike_want.txt";
-    if (fs::exists(p)) return p;
-    if (logger) {
-        SPDLOG_LOGGER_ERROR(logger, "cannot locate spike want file under install prefix; expected: {} (set GPU_SBT_WANT_FILE to override)", p.string());
-    }
-    return p;
-}
-
 static std::string resolve_sbt_ptx_path() {
     if (const auto v = getenv_str("GPU_SBT_PTX")) return *v;
     if (const auto v = getenv_str("VENTUS_SBT_PTX")) return *v;
@@ -245,18 +221,12 @@ static bool generate_ptx_via_sbt(const fs::path &elf, const std::string &kernel,
     }
 
     const std::string sbt_ptx = resolve_sbt_ptx_path();
-    const fs::path encoding_h = resolve_encoding_h_path();
-    const fs::path want_file = resolve_spike_want_file();
 
     std::ostringstream cmd;
-    if (!getenv_str("GPU_SBT_WANT_FILE")) {
-        cmd << "GPU_SBT_WANT_FILE=" << shell_quote(want_file.string()) << " ";
-    }
     cmd << shell_quote(sbt_ptx) << " " << shell_quote(elf.string());
     cmd << " --func " << shell_quote(kernel);
     cmd << " --out " << shell_quote(out_ptx.string());
     cmd << " --sm " << sm;
-    cmd << " --encoding-h " << shell_quote(encoding_h.string());
     cmd << " --require-known";
     if (getenv_str("GPU_SBT_PTX_NO_COMMENTS")) cmd << " --no-comments";
 
