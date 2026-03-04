@@ -45,7 +45,9 @@ namespace {
 static constexpr uint32_t kVentusElfBase = 0x80000000u;
 static constexpr uint32_t kVentusHeapBase = 0x90000000u;
 static constexpr size_t kElfSizeBytes = 256ull * 1024 * 1024;  // 0x8000_0000 .. 0x9000_0000
-static constexpr size_t kDefaultHeapSizeBytes = 1024ull * 1024 * 1024; // bring-up default: 1GiB
+static constexpr size_t kMaxHeapSizeBytes = (0x1'0000'0000ull - kVentusHeapBase);
+// Default to the full 32-bit heap window to avoid OOM on large PDS pool allocations.
+static constexpr size_t kDefaultHeapSizeBytes = kMaxHeapSizeBytes;
 
 static constexpr uint32_t kPerWarpWctxBytes = 1024u;  // must match sbt::ptx emitter
 static constexpr uint32_t kPerWarpStackBytes = 1024u; // must match sbt::ptx emitter
@@ -116,14 +118,6 @@ static std::optional<fs::path> resolve_install_prefix() {
     //   <prefix>/bin/sbt_ptx
     return libdir.parent_path();
 }
-
-static fs::path install_share_ventus_dir() {
-    const auto prefix = resolve_install_prefix();
-    if (!prefix) return fs::path("share/ventus");
-    return (*prefix) / "share" / "ventus";
-}
-
-static constexpr size_t kMaxHeapSizeBytes = (0x1'0000'0000ull - kVentusHeapBase);
 
 static size_t parse_size_mb(const char *env_name, size_t fallback_mb) {
     const auto v = getenv_str(env_name);
@@ -282,6 +276,12 @@ struct PtxDevice {
     // Optional: track allocations for debugging.
     std::vector<std::pair<uint32_t, uint32_t>> allocs;
 
+    // PTX backend internal PDS bitmap backing (u32 bitmap words in Ventus heap).
+    uint32_t pds_bitmap_vaddr = 0;
+    uint32_t pds_bitmap_size = 0;
+    uint32_t pds_bitmap_pool_base = 0;
+    uint32_t pds_bitmap_pool_blocks = 0;
+
     // Kernel image bookkeeping (PoCL currently passes kernel_id=0, but keep it generic).
     std::unordered_map<uint64_t, std::string> elf_path_by_kernel_id;
     std::string last_elf_path;
@@ -299,6 +299,96 @@ struct PtxDevice {
 
     std::mutex mu;
 };
+
+static bool map_vaddr_to_devptr(PtxDevice *dev, uint64_t vaddr, uint64_t size, CUdeviceptr *out);
+
+static bool alloc_heap_region_locked(PtxDevice *dev, uint64_t size, uint32_t *vaddr_out) {
+    if (dev == nullptr || vaddr_out == nullptr || size == 0) return false;
+
+    const uint64_t aligned = align_up_u64(size, 16);
+    const uint64_t v = dev->next_vaddr;
+    const uint64_t next = v + aligned;
+    const uint64_t off = static_cast<uint32_t>(v) - kVentusHeapBase;
+    if (off + aligned > dev->heap_size) {
+        SPDLOG_LOGGER_ERROR(logger, "heap alloc out of range: size=0x{:x}", size);
+        return false;
+    }
+
+    CUresult r = cuCtxSetCurrent(dev->cu_ctx);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
+        return false;
+    }
+    r = cuMemsetD8(dev->heap_base + static_cast<size_t>(off), 0, aligned);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8(alloc) failed: {}", cu_err(r));
+        return false;
+    }
+
+    dev->next_vaddr = static_cast<uint32_t>(next);
+    dev->allocs.emplace_back(static_cast<uint32_t>(v), static_cast<uint32_t>(aligned));
+    *vaddr_out = static_cast<uint32_t>(v);
+    return true;
+}
+
+static bool find_alloc_size_locked(const PtxDevice *dev, uint32_t base_vaddr, uint32_t *size_out) {
+    if (dev == nullptr || size_out == nullptr) return false;
+    for (const auto &[alloc_base, alloc_size] : dev->allocs) {
+        if (alloc_base == base_vaddr) {
+            *size_out = alloc_size;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool ensure_pds_bitmap(
+    PtxDevice *dev, uint32_t pool_base_vaddr, uint32_t pool_num_blocks, uint32_t *bitmap_vaddr_out
+) {
+    if (dev == nullptr || bitmap_vaddr_out == nullptr) return false;
+    if (pool_num_blocks == 0) {
+        *bitmap_vaddr_out = 0;
+        return true;
+    }
+
+    const uint64_t bitmap_words = (static_cast<uint64_t>(pool_num_blocks) + 31ull) / 32ull;
+    const uint64_t bitmap_bytes = bitmap_words * sizeof(uint32_t);
+    if (bitmap_bytes > std::numeric_limits<uint32_t>::max()) {
+        SPDLOG_LOGGER_ERROR(logger, "pds bitmap too large: {} bytes", bitmap_bytes);
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(dev->mu);
+    if (dev->pds_bitmap_vaddr == 0 || dev->pds_bitmap_size < bitmap_bytes) {
+        uint32_t new_vaddr = 0;
+        if (!alloc_heap_region_locked(dev, bitmap_bytes, &new_vaddr)) return false;
+        dev->pds_bitmap_vaddr = new_vaddr;
+        dev->pds_bitmap_size = static_cast<uint32_t>(align_up_u64(bitmap_bytes, 16));
+    }
+
+    CUdeviceptr bitmap_dev_ptr = 0;
+    if (!map_vaddr_to_devptr(dev, dev->pds_bitmap_vaddr, dev->pds_bitmap_size, &bitmap_dev_ptr)) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "cannot map pds bitmap vaddr=0x{:x} size=0x{:x}", dev->pds_bitmap_vaddr, dev->pds_bitmap_size
+        );
+        return false;
+    }
+    CUresult r = cuCtxSetCurrent(dev->cu_ctx);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
+        return false;
+    }
+    r = cuMemsetD8(bitmap_dev_ptr, 0, dev->pds_bitmap_size);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8(pds_bitmap) failed: {}", cu_err(r));
+        return false;
+    }
+
+    dev->pds_bitmap_pool_base = pool_base_vaddr;
+    dev->pds_bitmap_pool_blocks = pool_num_blocks;
+    *bitmap_vaddr_out = dev->pds_bitmap_vaddr;
+    return true;
+}
 
 static bool map_vaddr_to_devptr(PtxDevice *dev, uint64_t vaddr, uint64_t size, CUdeviceptr *out) {
     if (out == nullptr) return false;
@@ -588,33 +678,9 @@ extern "C" int vt_buf_alloc(
     auto *dev = static_cast<PtxDevice *>(hdevice);
 
     std::lock_guard<std::mutex> lock(dev->mu);
-
-    uint64_t aligned = align_up_u64(size, 16);
-    uint64_t v = dev->next_vaddr;
-    uint64_t next = v + aligned;
-
-    // Offset must fit into the heap and 32-bit space.
-    uint64_t off = static_cast<uint32_t>(v) - kVentusHeapBase;
-    if (off + aligned > dev->heap_size) {
-        SPDLOG_LOGGER_ERROR(logger, "vt_buf_alloc out of heap: size=0x{:x}", size);
-        return -1;
-    }
-
-    CUresult r = cuCtxSetCurrent(dev->cu_ctx);
-    if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
-        return -1;
-    }
-    r = cuMemsetD8(dev->heap_base + static_cast<size_t>(off), 0, aligned);
-    if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8(alloc) failed: {}", cu_err(r));
-        return -1;
-    }
-
-    dev->next_vaddr = static_cast<uint32_t>(next);
-    dev->allocs.emplace_back(static_cast<uint32_t>(v), static_cast<uint32_t>(aligned));
-
-    *vaddr = v;
+    uint32_t allocated_vaddr = 0;
+    if (!alloc_heap_region_locked(dev, size, &allocated_vaddr)) return -1;
+    *vaddr = allocated_vaddr;
     return 0;
 }
 
@@ -630,6 +696,38 @@ extern "C" int vt_buf_free(
 
     const uint32_t va = static_cast<uint32_t>(*vaddr);
     const uint32_t aligned = static_cast<uint32_t>(align_up_u64(size, 16));
+
+    // Internal scratch lifecycle contract:
+    // pds_bitmap is internal memory associated with a specific PDS pool.
+    // It should not leak into user-visible free semantics. When safe, we pop it before
+    // processing user free requests:
+    // 1) freeing the owning PDS pool, or
+    // 2) freeing the allocation immediately below bitmap (common LIFO teardown path).
+    if (dev->pds_bitmap_vaddr != 0 && !dev->allocs.empty() && dev->allocs.back().first == dev->pds_bitmap_vaddr) {
+        const bool free_is_pool = (va == dev->pds_bitmap_pool_base);
+        bool free_is_below_bitmap = false;
+        if (dev->allocs.size() >= 2) {
+            const auto &[below_va, below_sz] = dev->allocs[dev->allocs.size() - 2];
+            free_is_below_bitmap = (below_va == va && below_sz == aligned);
+        }
+
+        if (free_is_pool || free_is_below_bitmap) {
+            const auto [internal_va, _internal_sz] = dev->allocs.back();
+            dev->allocs.pop_back();
+            dev->next_vaddr = internal_va;
+            dev->pds_bitmap_vaddr = 0;
+            dev->pds_bitmap_size = 0;
+            dev->pds_bitmap_pool_base = 0;
+            dev->pds_bitmap_pool_blocks = 0;
+        } else if (va == dev->pds_bitmap_vaddr) {
+            SPDLOG_LOGGER_ERROR(
+                logger,
+                "vt_buf_free attempted to free internal pds bitmap directly (va=0x{:x} size=0x{:x})",
+                va, static_cast<uint64_t>(size)
+            );
+            return -1;
+        }
+    }
 
     if (!dev->allocs.empty()) {
         const auto [last_va, last_sz] = dev->allocs.back();
@@ -860,6 +958,8 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
     }
     uint32_t pds_base_vaddr = static_cast<uint32_t>(metaData->pdsBaseAddr);
     uint32_t pds_size_per_thread = static_cast<uint32_t>(metaData->pdsSize);
+    uint32_t pds_bitmap_base_vaddr = 0;
+    uint32_t pds_pool_num_blocks = 0;
 
     unsigned grid_x = static_cast<unsigned>(metaData->kernel_size[0]);
     unsigned grid_y = static_cast<unsigned>(metaData->kernel_size[1]);
@@ -872,6 +972,60 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
     const uint64_t threads = static_cast<uint64_t>(block_x) * block_y * block_z;
     uint64_t warps = metaData->wg_size;
     if (warps == 0) warps = (threads + 31) >> 5;
+
+    if (pds_size_per_thread != 0) {
+        uint64_t pds_bytes_per_wf = 0;
+        uint64_t pds_bytes_per_wg = 0;
+        if (__builtin_mul_overflow(metaData->wf_size, static_cast<uint64_t>(pds_size_per_thread), &pds_bytes_per_wf)
+            || __builtin_mul_overflow(warps, pds_bytes_per_wf, &pds_bytes_per_wg)) {
+            SPDLOG_LOGGER_ERROR(
+                logger, "vt_start: overflow while computing PDS bytes (wf_size={}, warps={}, pds_size={})",
+                metaData->wf_size, warps, static_cast<uint64_t>(pds_size_per_thread)
+            );
+            return -1;
+        }
+        if (pds_bytes_per_wg == 0) {
+            SPDLOG_LOGGER_ERROR(logger, "vt_start: invalid PDS bytes per WG is 0");
+            return -1;
+        }
+
+        uint32_t pds_pool_bytes = 0;
+        {
+            std::lock_guard<std::mutex> lock(dev->mu);
+            if (!find_alloc_size_locked(dev, pds_base_vaddr, &pds_pool_bytes)) {
+                SPDLOG_LOGGER_ERROR(
+                    logger, "vt_start: cannot resolve PDS pool size from alloc table (pds_base={})",
+                    hex_u64(pds_base_vaddr)
+                );
+                return -1;
+            }
+        }
+        if (pds_pool_bytes < pds_bytes_per_wg) {
+            SPDLOG_LOGGER_ERROR(
+                logger, "vt_start: PDS pool too small (pool_bytes={} bytes_per_wg={})",
+                static_cast<uint64_t>(pds_pool_bytes), pds_bytes_per_wg
+            );
+            return -1;
+        }
+
+        const uint64_t pool_blocks_u64 = static_cast<uint64_t>(pds_pool_bytes) / pds_bytes_per_wg;
+        if (pool_blocks_u64 == 0 || pool_blocks_u64 > std::numeric_limits<uint32_t>::max()) {
+            SPDLOG_LOGGER_ERROR(logger, "vt_start: invalid PDS pool block count {}", pool_blocks_u64);
+            return -1;
+        }
+        const uint64_t model_pool_blocks = g_ptx_caps_max_cores * kPtxCapsMaxWgSlotsPerCore;
+        if (pool_blocks_u64 > model_pool_blocks) {
+            SPDLOG_LOGGER_WARN(
+                logger, "vt_start: PDS pool blocks ({}) exceed PTX model capacity ({})",
+                pool_blocks_u64, model_pool_blocks
+            );
+        }
+        pds_pool_num_blocks = static_cast<uint32_t>(pool_blocks_u64);
+        if (!ensure_pds_bitmap(dev, pds_base_vaddr, pds_pool_num_blocks, &pds_bitmap_base_vaddr)) {
+            SPDLOG_LOGGER_ERROR(logger, "vt_start: cannot allocate PDS bitmap");
+            return -1;
+        }
+    }
 
     const uint64_t wctx_bytes = warps * kPerWarpWctxBytes;
     const uint64_t stack_bytes = warps * kPerWarpStackBytes;
@@ -899,7 +1053,10 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
 
     CUdeviceptr elf_base = dev->elf_base;
     CUdeviceptr heap_base = dev->heap_base;
-    void *params[] = {&elf_base, &heap_base, &knl_vaddr, &pds_base_vaddr, &pds_size_per_thread};
+    void *params[] = {
+        &elf_base, &heap_base, &knl_vaddr, &pds_base_vaddr, &pds_size_per_thread,
+        &pds_bitmap_base_vaddr, &pds_pool_num_blocks
+    };
 
     r = cuLaunchKernel(
         fun,
