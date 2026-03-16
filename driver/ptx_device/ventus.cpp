@@ -319,11 +319,7 @@ static bool alloc_heap_region_locked(PtxDevice *dev, uint64_t size, uint32_t *va
         SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
         return false;
     }
-    r = cuMemsetD8(dev->heap_base + static_cast<size_t>(off), 0, aligned);
-    if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8(alloc) failed: {}", cu_err(r));
-        return false;
-    }
+    // not memset to 0 here
 
     dev->next_vaddr = static_cast<uint32_t>(next);
     dev->allocs.emplace_back(static_cast<uint32_t>(v), static_cast<uint32_t>(aligned));
