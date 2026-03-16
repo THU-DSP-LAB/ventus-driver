@@ -109,6 +109,9 @@ vt_api_t load_backend() {
     backend_map["cyclesim"] = "libcyclesim_driver.so";
     backend_map["gvm"] = "libgvm_driver.so";
     backend_map["ptx"] = "libptx_driver.so";
+    backend_map["sbt"] = "libptx_driver.so";
+    backend_map["ptxsim"] = "libptx_driver.so";
+    backend_map["sbtsim"] = "libptx_driver.so";
     backend_map["simulator"] = "libcyclesim_driver.so";
     backend_map["systemc"] = "libcyclesim_driver.so";
 
