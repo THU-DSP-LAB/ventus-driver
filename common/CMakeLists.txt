@@ -1,7 +1,10 @@
 set(PROJECT driver_common_utils)
 project(${PROJECT})
 
-file(GLOB_RECURSE SRCS ./loadelf.cpp)
+set(SRCS
+    loadelf.cpp
+    ventus_perf_recorder.cpp
+)
 
 add_library(${PROJECT} STATIC ${SRCS})
 

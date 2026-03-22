@@ -10,6 +10,8 @@
 #include "ventus.h"
 
 #include "loadelf.hpp"
+#include "ventus_perf_recorder.hpp"
+#include "ventus_perf_scope.hpp"
 
 #include <cuda.h>
 
@@ -28,6 +30,7 @@
 #include <mutex>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <string>
@@ -63,6 +66,11 @@ static uint64_t g_ptx_caps_max_cores = kPtxCapsMaxCores;
 static std::shared_ptr<spdlog::logger> logger;
 
 namespace fs = std::filesystem;
+
+struct PtxDevice;
+static std::unique_ptr<vtperf::ScopedEvent> make_scoped_event(
+    PtxDevice *dev, const std::string &event_type
+);
 
 static std::optional<std::string> getenv_str(const char *name) {
     if (name == nullptr) return std::nullopt;
@@ -215,7 +223,11 @@ static bool read_file_to_string(const fs::path &p, std::string *out) {
     return true;
 }
 
-static bool generate_ptx_via_sbt(const fs::path &elf, const std::string &kernel, int sm, const fs::path &out_ptx, std::string *log) {
+static bool generate_ptx_via_sbt(
+    const fs::path &elf, const std::string &kernel, int sm, const fs::path &out_ptx,
+    std::string *log, PtxDevice *dev
+) {
+    const auto perf_scope = make_scoped_event(dev, "generate_ptx_via_sbt");
     try {
         fs::create_directories(out_ptx.parent_path());
     } catch (...) {
@@ -298,7 +310,44 @@ struct PtxDevice {
     int sm = 75;
 
     std::mutex mu;
+    std::unique_ptr<vtperf::Recorder> perf_recorder;
+    vt_perf_context_t perf_context{};
+    bool has_perf_context = false;
 };
+
+static std::unique_ptr<vtperf::Recorder> create_perf_recorder() {
+    if (!vtperf::perf_requested_from_env()) return nullptr;
+    return std::make_unique<vtperf::Recorder>(vtperf::recorder_config_from_env());
+}
+
+static void populate_perf_context_fields(vtperf::CompleteEvent &event, PtxDevice *dev) {
+    if (dev == nullptr) return;
+    vt_perf_context_t context{};
+    bool has_context = false;
+    {
+        std::lock_guard<std::mutex> lock(dev->mu);
+        if (dev->has_perf_context) {
+            context = dev->perf_context;
+            has_context = true;
+        }
+    }
+    if (!has_context) return;
+    event.launch_seq = context.launch_seq;
+    event.kernel_occurrence = context.kernel_occurrence;
+    event.kernel_signature_hash = context.kernel_signature_hash;
+    event.kernel_name = vtperf::read_perf_context_string(context.kernel_name);
+    event.scope_id = vtperf::read_perf_context_string(context.scope_id);
+    event.parent_event_id = vtperf::read_perf_context_string(context.parent_event_id);
+}
+
+static std::unique_ptr<vtperf::ScopedEvent> make_scoped_event(
+    PtxDevice *dev, const std::string &event_type
+) {
+    if (dev == nullptr || dev->perf_recorder == nullptr) return nullptr;
+    auto scoped = std::make_unique<vtperf::ScopedEvent>(*dev->perf_recorder, "vt", event_type);
+    populate_perf_context_fields(scoped->event(), dev);
+    return scoped;
+}
 
 static bool map_vaddr_to_devptr(PtxDevice *dev, uint64_t vaddr, uint64_t size, CUdeviceptr *out);
 
@@ -405,7 +454,9 @@ static bool map_vaddr_to_devptr(PtxDevice *dev, uint64_t vaddr, uint64_t size, C
     return false;
 }
 
-static bool get_or_jit_kernel(PtxDevice *dev, const fs::path &elf_path_in, const std::string &kernel, CUfunction *out_fun) {
+static bool get_or_jit_kernel(
+    PtxDevice *dev, const fs::path &elf_path_in, const std::string &kernel, CUfunction *out_fun
+) {
     if (dev == nullptr || out_fun == nullptr) return false;
     if (kernel.empty()) return false;
 
@@ -419,17 +470,21 @@ static bool get_or_jit_kernel(PtxDevice *dev, const fs::path &elf_path_in, const
     const uint64_t mtime = file_mtime_u64(elf_path);
     const std::string key = elf_path.string() + "|" + kernel + "|sm=" + std::to_string(dev->sm);
 
-    std::lock_guard<std::mutex> lock(dev->mu);
-
-    auto it = dev->jit_cache.find(key);
-    if (it != dev->jit_cache.end() && it->second.fun && it->second.elf_mtime == mtime) {
-        SPDLOG_LOGGER_DEBUG(logger, "jit cache hit: kernel='{}' elf='{}' ptx='{}'", kernel, elf_path.string(), it->second.ptx_path);
-        *out_fun = it->second.fun;
-        return true;
-    }
-    if (it != dev->jit_cache.end()) {
-        if (it->second.mod) cuModuleUnload(it->second.mod);
-        dev->jit_cache.erase(it);
+    {
+        std::lock_guard<std::mutex> lock(dev->mu);
+        auto it = dev->jit_cache.find(key);
+        if (it != dev->jit_cache.end() && it->second.fun && it->second.elf_mtime == mtime) {
+            SPDLOG_LOGGER_DEBUG(
+                logger, "jit cache hit: kernel='{}' elf='{}' ptx='{}'",
+                kernel, elf_path.string(), it->second.ptx_path
+            );
+            *out_fun = it->second.fun;
+            return true;
+        }
+        if (it != dev->jit_cache.end()) {
+            if (it->second.mod) cuModuleUnload(it->second.mod);
+            dev->jit_cache.erase(it);
+        }
     }
 
     const fs::path cache_dir = resolve_ptx_cache_dir();
@@ -439,11 +494,12 @@ static bool get_or_jit_kernel(PtxDevice *dev, const fs::path &elf_path_in, const
 
     SPDLOG_LOGGER_INFO(logger, "jit translate: kernel='{}' elf='{}' -> {}", kernel, elf_path.string(), out_ptx.string());
     std::string gen_log;
-    if (!generate_ptx_via_sbt(elf_path, kernel, dev->sm, out_ptx, &gen_log)) {
+    if (!generate_ptx_via_sbt(elf_path, kernel, dev->sm, out_ptx, &gen_log, dev)) {
         SPDLOG_LOGGER_ERROR(logger, "sbt_ptx failed for kernel='{}' elf='{}'\n{}", kernel, elf_path.string(), gen_log);
         return false;
     }
 
+    const auto read_ptx_scope = make_scoped_event(dev, "read_generated_ptx");
     std::string ptx;
     if (!read_file_to_string(out_ptx, &ptx)) {
         SPDLOG_LOGGER_ERROR(logger, "failed to read generated PTX: {}", out_ptx.string());
@@ -471,7 +527,10 @@ static bool get_or_jit_kernel(PtxDevice *dev, const fs::path &elf_path_in, const
     };
     static_assert(sizeof(opts) / sizeof(opts[0]) == sizeof(vals) / sizeof(vals[0]));
 
-    CUresult r = cuModuleLoadDataEx(&mod, ptx.c_str(), static_cast<unsigned>(sizeof(opts) / sizeof(opts[0])), opts, vals);
+    const auto load_scope = make_scoped_event(dev, "cuModuleLoadDataEx");
+    CUresult r = cuModuleLoadDataEx(
+        &mod, ptx.c_str(), static_cast<unsigned>(sizeof(opts) / sizeof(opts[0])), opts, vals
+    );
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuModuleLoadDataEx(JIT) failed: {}\ninfo:\n{}\nerror:\n{}", cu_err(r), info_log, err_log);
         return false;
@@ -480,6 +539,7 @@ static bool get_or_jit_kernel(PtxDevice *dev, const fs::path &elf_path_in, const
         SPDLOG_LOGGER_INFO(logger, "ptx jit info (kernel='{}'):\n{}", kernel, info_log);
     }
 
+    const auto get_function_scope = make_scoped_event(dev, "cuModuleGetFunction");
     CUfunction fun{};
     r = cuModuleGetFunction(&fun, mod, kernel.c_str());
     if (r != CUDA_SUCCESS) {
@@ -493,7 +553,16 @@ static bool get_or_jit_kernel(PtxDevice *dev, const fs::path &elf_path_in, const
     ent.fun = fun;
     ent.elf_mtime = mtime;
     ent.ptx_path = out_ptx.string();
-    dev->jit_cache.emplace(key, ent);
+    {
+        std::lock_guard<std::mutex> lock(dev->mu);
+        auto it = dev->jit_cache.find(key);
+        if (it != dev->jit_cache.end()) {
+            if (it->second.mod) cuModuleUnload(it->second.mod);
+            it->second = ent;
+        } else {
+            dev->jit_cache.emplace(key, ent);
+        }
+    }
 
     *out_fun = fun;
     return true;
@@ -512,6 +581,13 @@ extern "C" int vt_dev_open(vt_device_h *hdevice) {
     }
 
     auto dev = std::make_unique<PtxDevice>();
+    vtperf::clear_perf_context(&dev->perf_context);
+    try {
+        dev->perf_recorder = create_perf_recorder();
+    } catch (const std::exception &error) {
+        SPDLOG_LOGGER_ERROR(logger, "perf recorder init failed: {}", error.what());
+        return -1;
+    }
 
     CUresult r = cuInit(0);
     if (r != CUDA_SUCCESS) {
@@ -672,6 +748,7 @@ extern "C" int vt_buf_alloc(
     if (hdevice == nullptr || vaddr == nullptr || size == 0) return -1;
 
     auto *dev = static_cast<PtxDevice *>(hdevice);
+    const auto perf_scope = make_scoped_event(dev, "vt_buf_alloc");
 
     std::lock_guard<std::mutex> lock(dev->mu);
     uint32_t allocated_vaddr = 0;
@@ -688,6 +765,7 @@ extern "C" int vt_buf_free(
     if (hdevice == nullptr || vaddr == nullptr || *vaddr == 0 || size == 0) return 0;
 
     auto *dev = static_cast<PtxDevice *>(hdevice);
+    const auto perf_scope = make_scoped_event(dev, "vt_buf_free");
     std::lock_guard<std::mutex> lock(dev->mu);
 
     const uint32_t va = static_cast<uint32_t>(*vaddr);
@@ -757,6 +835,7 @@ extern "C" int vt_copy_to_dev(
     if (hdevice == nullptr || src_addr == nullptr || size == 0) return -1;
 
     auto *dev = static_cast<PtxDevice *>(hdevice);
+    const auto perf_scope = make_scoped_event(dev, "vt_copy_to_dev");
     CUresult r = cuCtxSetCurrent(dev->cu_ctx);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
@@ -789,6 +868,7 @@ extern "C" int vt_copy_from_dev(
     if (hdevice == nullptr || dst_addr == nullptr || size == 0) return -1;
 
     auto *dev = static_cast<PtxDevice *>(hdevice);
+    const auto perf_scope = make_scoped_event(dev, "vt_copy_from_dev");
     CUresult r = cuCtxSetCurrent(dev->cu_ctx);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
@@ -826,6 +906,7 @@ extern "C" int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, 
     if (hdevice == nullptr || filename == nullptr) return -1;
 
     auto *dev = static_cast<PtxDevice *>(hdevice);
+    const auto perf_scope = make_scoped_event(dev, "vt_upload_kernel_file");
 
     {
         std::lock_guard<std::mutex> lock(dev->mu);
@@ -900,6 +981,24 @@ extern "C" int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, 
     return 0;
 }
 
+extern "C" int vt_set_perf_context(vt_device_h hdevice, const vt_perf_context_t *context) {
+    if (hdevice == nullptr || context == nullptr) return -1;
+    auto *dev = static_cast<PtxDevice *>(hdevice);
+    std::lock_guard<std::mutex> lock(dev->mu);
+    dev->perf_context = *context;
+    dev->has_perf_context = true;
+    return 0;
+}
+
+extern "C" int vt_clear_perf_context(vt_device_h hdevice) {
+    if (hdevice == nullptr) return -1;
+    auto *dev = static_cast<PtxDevice *>(hdevice);
+    std::lock_guard<std::mutex> lock(dev->mu);
+    vtperf::clear_perf_context(&dev->perf_context);
+    dev->has_perf_context = false;
+    return 0;
+}
+
 // Launch a translated PTX kernel.
 //
 // PoCL passes a driver-level `vt_kernel_metadata_t` which includes:
@@ -912,6 +1011,7 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
     if (hdevice == nullptr || metaData == nullptr) return -1;
 
     auto *dev = static_cast<PtxDevice *>(hdevice);
+    const auto start_scope = make_scoped_event(dev, "vt_start");
 
     CUresult r = cuCtxSetCurrent(dev->cu_ctx);
     if (r != CUDA_SUCCESS) {
@@ -924,6 +1024,7 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
         return -1;
     }
     const std::string kernel = metaData->kernel_name;
+    if (start_scope) start_scope->event().kernel_name = kernel;
 
     std::string elf_path;
     {
@@ -1054,6 +1155,8 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
         &pds_bitmap_base_vaddr, &pds_pool_num_blocks
     };
 
+    const auto launch_scope = make_scoped_event(dev, "cuLaunchKernel");
+    if (launch_scope) launch_scope->event().kernel_name = kernel;
     r = cuLaunchKernel(
         fun,
         grid_x, grid_y, grid_z,
@@ -1076,12 +1179,14 @@ extern "C" int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     if (hdevice == nullptr) return -1;
 
     auto *dev = static_cast<PtxDevice *>(hdevice);
+    const auto wait_scope = make_scoped_event(dev, "vt_ready_wait");
     CUresult r = cuCtxSetCurrent(dev->cu_ctx);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
         return -1;
     }
 
+    const auto sync_scope = make_scoped_event(dev, "cuCtxSynchronize");
     r = cuCtxSynchronize();
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuCtxSynchronize failed: {}", cu_err(r));

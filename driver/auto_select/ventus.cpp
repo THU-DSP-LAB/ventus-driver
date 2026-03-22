@@ -36,6 +36,17 @@ extern "C" void __vt_enable_dump_json_copy_to_dev(const char *filename);
 static uint64_t g_last_copy_to_dev_addr = 0; // 上次memcpy_device_to_host的设备端地址
 static std::optional<std::string> g_dump_result_filename = std::nullopt;
 
+static int vt_set_perf_context_noop(vt_device_h hdevice, const vt_perf_context_t *context) {
+    (void)hdevice;
+    (void)context;
+    return 0;
+}
+
+static int vt_clear_perf_context_noop(vt_device_h hdevice) {
+    (void)hdevice;
+    return 0;
+}
+
 //
 // 定义函数指针结构体，包含所有ventus.h API的函数指针
 //
@@ -70,6 +81,8 @@ struct vt_api_t {
         vt_device_h device, const void *content, uint64_t size, int taskID
     );
     int (*vt_upload_kernel_file)(vt_device_h device, const char *filename, int kernelID);
+    int (*vt_set_perf_context)(vt_device_h hdevice, const vt_perf_context_t *context);
+    int (*vt_clear_perf_context)(vt_device_h hdevice);
     int (*vt_dump_perf)(vt_device_h device, FILE *stream);
 } vt_api = {0};
 
@@ -182,8 +195,13 @@ vt_api_t load_backend() {
     api.vt_finish_all_kernel = (int (*)(vt_device_h, std::queue<int>*))dlsym(handle, "vt_finish_all_kernel");
     api.vt_upload_kernel_bytes = (int (*)(vt_device_h, const void*, uint64_t, int))dlsym(handle, "vt_upload_kernel_bytes");
     api.vt_upload_kernel_file = (int (*)(vt_device_h, const char*, int))dlsym(handle, "vt_upload_kernel_file");
+    api.vt_set_perf_context = (int (*)(vt_device_h, const vt_perf_context_t*))dlsym(handle, "vt_set_perf_context");
+    api.vt_clear_perf_context = (int (*)(vt_device_h))dlsym(handle, "vt_clear_perf_context");
     api.vt_dump_perf = (int (*)(vt_device_h, FILE*))dlsym(handle, "vt_dump_perf");
     // clang-format on
+
+    if (!api.vt_set_perf_context) api.vt_set_perf_context = vt_set_perf_context_noop;
+    if (!api.vt_clear_perf_context) api.vt_clear_perf_context = vt_clear_perf_context_noop;
 
     // 检查是否所有函数指针都成功获取
     if (!api.vt_dev_open || !api.vt_dev_close || !api.vt_dev_caps || !api.vt_root_mem_alloc ||
@@ -327,6 +345,16 @@ extern "C" int vt_upload_kernel_bytes(
 extern "C" int vt_upload_kernel_file(vt_device_h device, const char *filename, int kernelID) {
     if (!loader.api.vt_upload_kernel_file) return -1;
     return loader.api.vt_upload_kernel_file(device, filename, kernelID);
+}
+
+extern "C" int vt_set_perf_context(vt_device_h hdevice, const vt_perf_context_t *context) {
+    if (!loader.api.vt_set_perf_context) return -1;
+    return loader.api.vt_set_perf_context(hdevice, context);
+}
+
+extern "C" int vt_clear_perf_context(vt_device_h hdevice) {
+    if (!loader.api.vt_clear_perf_context) return -1;
+    return loader.api.vt_clear_perf_context(hdevice);
 }
 
 extern "C" int vt_dump_perf(vt_device_h device, FILE *stream) {

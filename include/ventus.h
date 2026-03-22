@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <queue>
+#include "ventus_perf_context.hpp"
 #include "vt_utils.h"
 
 #ifdef __cplusplus
@@ -173,6 +174,10 @@ int vt_upload_kernel_bytes(vt_device_h device, const void* content, uint64_t siz
 /// @param kernelID 对应的kernel ID
 /// @return 若无错误则返回0，否则返回-1
 int vt_upload_kernel_file(vt_device_h device, const char* filename, int kernelID);
+
+int vt_set_perf_context(vt_device_h hdevice, const vt_perf_context_t* context);
+
+int vt_clear_perf_context(vt_device_h hdevice);
 
 /// dump performance counters
 /// @brief 【未实现】性能计数
