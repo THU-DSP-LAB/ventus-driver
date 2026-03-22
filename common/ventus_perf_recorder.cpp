@@ -24,6 +24,31 @@ constexpr std::string_view kEnvPassId = "VENTUS_PERF_PASS_ID";
 constexpr std::string_view kEnvPassType = "VENTUS_PERF_PASS_TYPE";
 constexpr std::string_view kEnvBackend = "VENTUS_BACKEND";
 constexpr std::string_view kEnvOutDir = "VENTUS_PERF_OUT_DIR";
+constexpr std::string_view kEnvDetail = "VENTUS_PERF_DETAIL";
+
+constexpr std::string_view kDetailDefault = "default";
+constexpr std::string_view kDetailFull = "full";
+
+bool detail_level_is_valid(std::string_view value) {
+    return value == kDetailDefault || value == kDetailFull;
+}
+
+bool detail_level_records_all(std::string_view value) {
+    return value == kDetailFull;
+}
+
+bool default_detail_keeps_event(std::string_view stream, std::string_view event_type) {
+    if (event_type == "kernel_submit" || event_type == "kernel_wait") return true;
+    if (event_type == "buffer_write" || event_type == "buffer_read" ||
+        event_type == "buffer_copy" || event_type == "buffer_fill" ||
+        event_type == "map_mem" || event_type == "unmap_mem") {
+        return stream == "pocl";
+    }
+    if (event_type == "vt_copy_to_dev" || event_type == "vt_copy_from_dev") {
+        return stream == "vt";
+    }
+    return false;
+}
 
 bool env_enabled(const char *value) {
     return value != nullptr && value[0] == '1' && value[1] == '\0';
@@ -154,6 +179,12 @@ RecorderConfig recorder_config_from_env() {
     config.pass_id = require_env(kEnvPassId);
     config.pass_type = require_env(kEnvPassType);
     config.backend = require_env(kEnvBackend);
+    config.detail_level = std::getenv(std::string(kEnvDetail).c_str()) == nullptr
+                              ? std::string(kDetailDefault)
+                              : require_env(kEnvDetail);
+    if (!detail_level_is_valid(config.detail_level)) {
+        throw std::runtime_error("unsupported perf detail level: " + config.detail_level);
+    }
     config.out_dir = require_env(kEnvOutDir);
     return config;
 }
@@ -193,11 +224,21 @@ Recorder::Recorder(RecorderConfig config)
       pid_(static_cast<uint64_t>(::getpid())) {
     if (!config_.enabled) return;
     if (config_.experiment_id.empty() || config_.pass_id.empty() ||
-        config_.pass_type.empty() || config_.backend.empty() ||
+        config_.pass_type.empty() || config_.backend.empty() || config_.detail_level.empty() ||
         config_.out_dir.empty()) {
         throw std::runtime_error("perf recorder config is missing required fields");
     }
+    if (!detail_level_is_valid(config_.detail_level)) {
+        throw std::runtime_error("unsupported perf detail level: " + config_.detail_level);
+    }
     validate_out_dir(config_.out_dir);
+}
+
+Recorder::~Recorder() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto &[_, output] : event_outputs_) {
+        if (output) output->flush();
+    }
 }
 
 std::string Recorder::next_event_id() {
@@ -218,6 +259,24 @@ std::filesystem::path Recorder::event_path_for_stream(const std::string &stream_
     const auto path = config_.out_dir / ("events." + stream_name + ".jsonl");
     event_paths_.emplace(stream_name, path);
     return path;
+}
+
+std::ofstream &Recorder::output_for_stream(const std::string &stream_name) {
+    auto it = event_outputs_.find(stream_name);
+    if (it != event_outputs_.end()) return *it->second;
+    const auto path = event_path_for_stream(stream_name);
+    auto output = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::app);
+    if (!output || !*output) {
+        throw std::runtime_error("failed to open perf event file: " + path.string());
+    }
+    auto [inserted_it, _] = event_outputs_.emplace(stream_name, std::move(output));
+    return *inserted_it->second;
+}
+
+bool Recorder::should_record_event(const std::string &stream, const std::string &event_type) const {
+    if (!config_.enabled) return false;
+    if (detail_level_records_all(config_.detail_level)) return true;
+    return default_detail_keeps_event(stream, event_type);
 }
 
 CompleteEvent Recorder::finalize_event(const CompleteEvent &event) {
@@ -247,17 +306,16 @@ CompleteEvent Recorder::finalize_event(const CompleteEvent &event) {
 
 void Recorder::write_event(const CompleteEvent &event) {
     if (!config_.enabled) return;
+    if (!should_record_event(event.stream, event.event_type)) return;
     const CompleteEvent finalized = finalize_event(event);
     const std::string line = serialize_event_json(finalized);
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto path = event_path_for_stream(finalized.stream);
-    std::ofstream output(path, std::ios::out | std::ios::app);
-    if (!output) {
-        throw std::runtime_error("failed to open perf event file: " + path.string());
-    }
+    std::ofstream &output = output_for_stream(finalized.stream);
     output << line << '\n';
     if (!output) {
-        throw std::runtime_error("failed to append perf event file: " + path.string());
+        throw std::runtime_error(
+            "failed to append perf event file: " + event_path_for_stream(finalized.stream).string()
+        );
     }
 }
 

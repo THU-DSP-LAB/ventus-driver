@@ -344,6 +344,7 @@ static std::unique_ptr<vtperf::ScopedEvent> make_scoped_event(
     PtxDevice *dev, const std::string &event_type
 ) {
     if (dev == nullptr || dev->perf_recorder == nullptr) return nullptr;
+    if (!dev->perf_recorder->should_record_event("vt", event_type)) return nullptr;
     auto scoped = std::make_unique<vtperf::ScopedEvent>(*dev->perf_recorder, "vt", event_type);
     populate_perf_context_fields(scoped->event(), dev);
     return scoped;
