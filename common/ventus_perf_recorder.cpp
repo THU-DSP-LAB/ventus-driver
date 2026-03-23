@@ -135,7 +135,7 @@ void append_attr_value(std::ostringstream &stream, const AttrValue &value) {
 bool entry_is_allowed_wrapper_artifact(const std::filesystem::path &entry) {
     const std::string name = entry.filename().string();
     return name == "pass.begin.json" || name == "pass.json" || name == "stdout.log" ||
-           name == "stderr.log";
+           name == "stderr.log" || name == "artifacts";
 }
 
 void validate_out_dir(const std::filesystem::path &out_dir) {

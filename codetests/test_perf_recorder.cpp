@@ -85,6 +85,32 @@ static void test_scope_parentage_and_launch_sequence() {
   if (vtperf::next_launch_sequence() != 1) std::abort();
 }
 
+static void test_recorder_allows_wrapper_artifacts_directory() {
+  namespace fs = std::filesystem;
+  const fs::path out_dir = fs::temp_directory_path() / "ventus-perf-artifacts-dir-test";
+  fs::remove_all(out_dir);
+  fs::create_directories(out_dir / "artifacts" / "nsys");
+
+  vtperf::RecorderConfig config;
+  config.enabled = true;
+  config.experiment_id = "exp-test";
+  config.pass_id = "nsys-0001";
+  config.pass_type = "nsys";
+  config.backend = "ptx";
+  config.detail_level = "full";
+  config.out_dir = out_dir;
+
+  vtperf::Recorder recorder(config);
+
+  vtperf::CompleteEvent event;
+  event.stream = "vt";
+  event.event_type = "vt_copy_to_dev";
+  event.ts_start_ns = 10;
+  event.ts_end_ns = 20;
+  recorder.write_event(event);
+  if (!fs::exists(out_dir / "events.vt.jsonl")) std::abort();
+}
+
 static void test_launch_sequence_is_process_wide() {
   std::atomic<uint64_t> first{0};
   std::atomic<uint64_t> second{0};
@@ -99,6 +125,7 @@ int main() {
   test_recorder_writes_event_files();
   test_default_detail_skips_high_frequency_driver_events();
   test_scope_parentage_and_launch_sequence();
+  test_recorder_allows_wrapper_artifacts_directory();
   test_launch_sequence_is_process_wide();
   return 0;
 }
