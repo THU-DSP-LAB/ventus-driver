@@ -42,12 +42,11 @@
 namespace {
 
 // Ventus device pointers are 32-bit in this PoCL flow (see POCL_DEVICE_ADDRESS_BITS=32).
-// We model the "device address space" as backing buffers for:
-// - [0x8000_0000, 0x9000_0000): ELF PT_LOAD segments (global, read-only-ish)
-// - [0x9000_0000, ...):        heap allocations (arg buffers, private, global buffers)
-static constexpr uint32_t kVentusElfBase = 0x80000000u;
+// Runtime-visible non-shared memory is one logical Global region starting at 0x8000_0000.
+// Driver-side runtime allocations still begin at 0x9000_0000 as an internal placement policy.
+static constexpr uint32_t kVentusGlobalBase = 0x80000000u;
 static constexpr uint32_t kVentusHeapBase = 0x90000000u;
-static constexpr size_t kElfSizeBytes = 256ull * 1024 * 1024;  // 0x8000_0000 .. 0x9000_0000
+static constexpr size_t kGlobalSizeBytes = (0x1'0000'0000ull - kVentusGlobalBase);
 static constexpr size_t kMaxHeapSizeBytes = (0x1'0000'0000ull - kVentusHeapBase);
 // Default to the full 32-bit heap window to avoid OOM on large PDS pool allocations.
 static constexpr size_t kDefaultHeapSizeBytes = kMaxHeapSizeBytes;
@@ -268,6 +267,10 @@ static uint64_t align_up_u64(uint64_t x, uint64_t a) {
     return (x + (a - 1)) & ~(a - 1);
 }
 
+static uint64_t align_down_u64(uint64_t x, uint64_t a) {
+    return x & ~(a - 1);
+}
+
 // Per-process device state.
 //
 // Notes:
@@ -277,16 +280,33 @@ struct PtxDevice {
     CUdevice cu_dev{};
     CUcontext cu_ctx{};
 
-    CUdeviceptr elf_base{};
-    size_t elf_size{};
-
-    CUdeviceptr heap_base{};
+    CUdeviceptr global_base{};
+    size_t global_size{};
+    size_t alloc_granularity{};
     size_t heap_size{};
 
     uint32_t next_vaddr = kVentusHeapBase;
 
-    // Optional: track allocations for debugging.
-    std::vector<std::pair<uint32_t, uint32_t>> allocs;
+    enum class GlobalPageUse {
+        ElfImage,
+        RuntimeAlloc,
+    };
+
+    struct GlobalPage final {
+        CUmemGenericAllocationHandle handle{};
+        uint32_t elf_refs = 0;
+        uint32_t runtime_refs = 0;
+    };
+
+    struct AllocationRecord final {
+        uint32_t base_vaddr = 0;
+        uint32_t requested_size = 0;
+        uint32_t mapped_base_vaddr = 0;
+        uint32_t mapped_size = 0;
+    };
+
+    std::unordered_map<uint32_t, GlobalPage> global_pages;
+    std::vector<AllocationRecord> allocs;
 
     // PTX backend internal PDS bitmap backing (u32 bitmap words in Ventus heap).
     uint32_t pds_bitmap_vaddr = 0;
@@ -351,37 +371,277 @@ static std::unique_ptr<vtperf::ScopedEvent> make_scoped_event(
 }
 
 static bool map_vaddr_to_devptr(PtxDevice *dev, uint64_t vaddr, uint64_t size, CUdeviceptr *out);
+static bool map_vaddr_to_devptr_locked(PtxDevice *dev, uint64_t vaddr, uint64_t size, CUdeviceptr *out);
+static bool release_alloc_record_locked(PtxDevice *dev, const PtxDevice::AllocationRecord &alloc);
 
-static bool alloc_heap_region_locked(PtxDevice *dev, uint64_t size, uint32_t *vaddr_out) {
-    if (dev == nullptr || vaddr_out == nullptr || size == 0) return false;
-
-    const uint64_t aligned = align_up_u64(size, 16);
-    const uint64_t v = dev->next_vaddr;
-    const uint64_t next = v + aligned;
-    const uint64_t off = static_cast<uint32_t>(v) - kVentusHeapBase;
-    if (off + aligned > dev->heap_size) {
-        SPDLOG_LOGGER_ERROR(logger, "heap alloc out of range: size=0x{:x}", size);
-        return false;
+static const char *global_page_use_name(PtxDevice::GlobalPageUse use) {
+    switch (use) {
+    case PtxDevice::GlobalPageUse::ElfImage:
+        return "elf";
+    case PtxDevice::GlobalPageUse::RuntimeAlloc:
+        return "runtime";
     }
+    return "unknown";
+}
 
-    CUresult r = cuCtxSetCurrent(dev->cu_ctx);
+static bool global_page_has_live_refs(const PtxDevice::GlobalPage &page) {
+    return page.elf_refs != 0 || page.runtime_refs != 0;
+}
+
+static uint32_t *global_page_ref_slot(PtxDevice::GlobalPage *page, PtxDevice::GlobalPageUse use) {
+    if (page == nullptr) return nullptr;
+    switch (use) {
+    case PtxDevice::GlobalPageUse::ElfImage:
+        return &page->elf_refs;
+    case PtxDevice::GlobalPageUse::RuntimeAlloc:
+        return &page->runtime_refs;
+    }
+    return nullptr;
+}
+
+static bool set_current_ctx(PtxDevice *dev) {
+    if (dev == nullptr) return false;
+    const CUresult r = cuCtxSetCurrent(dev->cu_ctx);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
         return false;
     }
-    // not memset to 0 here
+    return true;
+}
+
+static bool global_range_to_offset(
+    const PtxDevice *dev, uint64_t vaddr, uint64_t size, uint64_t *offset_out
+) {
+    if (dev == nullptr || offset_out == nullptr || size == 0) return false;
+    if (vaddr < kVentusGlobalBase) return false;
+    const uint64_t offset = vaddr - kVentusGlobalBase;
+    if (offset > dev->global_size || size > dev->global_size - offset) return false;
+    *offset_out = offset;
+    return true;
+}
+
+static bool claim_global_page_locked(PtxDevice *dev, uint32_t page_vaddr, PtxDevice::GlobalPageUse use) {
+    if (dev == nullptr) return false;
+
+    auto it = dev->global_pages.find(page_vaddr);
+    if (it == dev->global_pages.end()) {
+        uint64_t offset = 0;
+        if (!global_range_to_offset(dev, page_vaddr, dev->alloc_granularity, &offset)) {
+            SPDLOG_LOGGER_ERROR(
+                logger,
+                "global page out of range: vaddr=0x{:x} size=0x{:x}",
+                page_vaddr,
+                static_cast<unsigned long long>(dev->alloc_granularity)
+            );
+            return false;
+        }
+
+        CUmemAllocationProp prop{};
+        prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+        prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        prop.location.id = dev->cu_dev;
+        prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_NONE;
+
+        if (!set_current_ctx(dev)) return false;
+
+        CUmemGenericAllocationHandle handle{};
+        CUresult r = cuMemCreate(&handle, dev->alloc_granularity, &prop, 0);
+        if (r != CUDA_SUCCESS) {
+            SPDLOG_LOGGER_ERROR(logger, "cuMemCreate failed for page vaddr=0x{:x}: {}", page_vaddr, cu_err(r));
+            return false;
+        }
+
+        const CUdeviceptr reserved = dev->global_base + offset;
+        r = cuMemMap(reserved, dev->alloc_granularity, 0, handle, 0);
+        if (r != CUDA_SUCCESS) {
+            SPDLOG_LOGGER_ERROR(logger, "cuMemMap failed for page vaddr=0x{:x}: {}", page_vaddr, cu_err(r));
+            cuMemRelease(handle);
+            return false;
+        }
+
+        CUmemAccessDesc access{};
+        access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        access.location.id = dev->cu_dev;
+        access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+        r = cuMemSetAccess(reserved, dev->alloc_granularity, &access, 1);
+        if (r != CUDA_SUCCESS) {
+            SPDLOG_LOGGER_ERROR(logger, "cuMemSetAccess failed for page vaddr=0x{:x}: {}", page_vaddr, cu_err(r));
+            cuMemUnmap(reserved, dev->alloc_granularity);
+            cuMemRelease(handle);
+            return false;
+        }
+
+        auto insert = dev->global_pages.emplace(page_vaddr, PtxDevice::GlobalPage{handle});
+        it = insert.first;
+    }
+
+    uint32_t *refs = global_page_ref_slot(&it->second, use);
+    if (refs == nullptr) return false;
+    if (*refs == std::numeric_limits<uint32_t>::max()) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "global page reference overflow: vaddr=0x{:x} use={}",
+            page_vaddr, global_page_use_name(use)
+        );
+        return false;
+    }
+    ++(*refs);
+    return true;
+}
+
+static bool release_global_page_locked(PtxDevice *dev, uint32_t page_vaddr) {
+    if (dev == nullptr) return false;
+    auto it = dev->global_pages.find(page_vaddr);
+    if (it == dev->global_pages.end()) return true;
+    if (!set_current_ctx(dev)) return false;
+
+    uint64_t offset = 0;
+    if (!global_range_to_offset(dev, page_vaddr, dev->alloc_granularity, &offset)) {
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "global page release out of range: vaddr=0x{:x} size=0x{:x}",
+            page_vaddr,
+            static_cast<unsigned long long>(dev->alloc_granularity)
+        );
+        return false;
+    }
+
+    const CUdeviceptr reserved = dev->global_base + offset;
+    CUresult r = cuMemUnmap(reserved, dev->alloc_granularity);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuMemUnmap failed for page vaddr=0x{:x}: {}", page_vaddr, cu_err(r));
+        return false;
+    }
+    r = cuMemRelease(it->second.handle);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuMemRelease failed for page vaddr=0x{:x}: {}", page_vaddr, cu_err(r));
+        return false;
+    }
+    dev->global_pages.erase(it);
+    return true;
+}
+
+static bool release_global_page_use_locked(
+    PtxDevice *dev, uint32_t page_vaddr, PtxDevice::GlobalPageUse use
+) {
+    if (dev == nullptr) return false;
+    auto it = dev->global_pages.find(page_vaddr);
+    if (it == dev->global_pages.end()) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "global page release missing mapping: vaddr=0x{:x} use={}",
+            page_vaddr, global_page_use_name(use)
+        );
+        return false;
+    }
+
+    uint32_t *refs = global_page_ref_slot(&it->second, use);
+    if (refs == nullptr) return false;
+    if (*refs == 0) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "global page release without matching claim: vaddr=0x{:x} use={}",
+            page_vaddr, global_page_use_name(use)
+        );
+        return false;
+    }
+    --(*refs);
+    return true;
+}
+
+static bool claim_global_range_locked(
+    PtxDevice *dev, uint64_t vaddr, uint64_t size, PtxDevice::GlobalPageUse use
+) {
+    if (dev == nullptr || size == 0) return false;
+    uint64_t offset = 0;
+    if (!global_range_to_offset(dev, vaddr, size, &offset)) {
+        SPDLOG_LOGGER_ERROR(logger, "global map out of range: vaddr=0x{:x} size=0x{:x}", vaddr, size);
+        return false;
+    }
+    const uint64_t page_begin = align_down_u64(vaddr, dev->alloc_granularity);
+    const uint64_t page_end = align_up_u64(vaddr + size, dev->alloc_granularity);
+    std::vector<uint32_t> claimed_pages;
+    claimed_pages.reserve(static_cast<size_t>((page_end - page_begin) / dev->alloc_granularity));
+    for (uint64_t page = page_begin; page < page_end; page += dev->alloc_granularity) {
+        if (!claim_global_page_locked(dev, static_cast<uint32_t>(page), use)) {
+            for (auto it = claimed_pages.rbegin(); it != claimed_pages.rend(); ++it) {
+                if (!release_global_page_use_locked(dev, *it, use)) break;
+            }
+            return false;
+        }
+        claimed_pages.push_back(static_cast<uint32_t>(page));
+    }
+    return true;
+}
+
+static bool release_global_range_locked(
+    PtxDevice *dev, uint64_t vaddr, uint64_t size, PtxDevice::GlobalPageUse use
+) {
+    if (dev == nullptr || size == 0) return false;
+    const uint64_t page_begin = align_down_u64(vaddr, dev->alloc_granularity);
+    const uint64_t page_end = align_up_u64(vaddr + size, dev->alloc_granularity);
+    for (uint64_t page = page_begin; page < page_end; page += dev->alloc_granularity) {
+        if (!release_global_page_use_locked(dev, static_cast<uint32_t>(page), use)) return false;
+    }
+    return true;
+}
+
+static bool map_vaddr_to_devptr_locked(PtxDevice *dev, uint64_t vaddr, uint64_t size, CUdeviceptr *out) {
+    if (dev == nullptr || out == nullptr || size == 0) return false;
+    uint64_t offset = 0;
+    if (!global_range_to_offset(dev, vaddr, size, &offset)) return false;
+
+    const uint64_t page_begin = align_down_u64(vaddr, dev->alloc_granularity);
+    const uint64_t page_end = align_up_u64(vaddr + size, dev->alloc_granularity);
+    for (uint64_t page = page_begin; page < page_end; page += dev->alloc_granularity) {
+        auto it = dev->global_pages.find(static_cast<uint32_t>(page));
+        if (it == dev->global_pages.end()) return false;
+        if (!global_page_has_live_refs(it->second)) return false;
+    }
+    *out = dev->global_base + offset;
+    return true;
+}
+
+static bool map_vaddr_to_devptr(PtxDevice *dev, uint64_t vaddr, uint64_t size, CUdeviceptr *out) {
+    if (dev == nullptr) return false;
+    std::lock_guard<std::mutex> lock(dev->mu);
+    return map_vaddr_to_devptr_locked(dev, vaddr, size, out);
+}
+
+static bool alloc_heap_region_locked(PtxDevice *dev, uint64_t size, uint32_t *vaddr_out) {
+    if (dev == nullptr || vaddr_out == nullptr || size == 0) return false;
+
+    const uint64_t requested = align_up_u64(size, 16);
+    const uint64_t base = align_up_u64(dev->next_vaddr, 16);
+    const uint64_t next = base + requested;
+    const uint64_t off = base - kVentusHeapBase;
+    if (off > dev->heap_size || requested > dev->heap_size - off) {
+        SPDLOG_LOGGER_ERROR(logger, "heap alloc out of range: size=0x{:x}", size);
+        return false;
+    }
+    const uint64_t mapped_base = align_down_u64(base, dev->alloc_granularity);
+    const uint64_t mapped_end = align_up_u64(next, dev->alloc_granularity);
+    const uint64_t mapped = mapped_end - mapped_base;
+    if (mapped_base > std::numeric_limits<uint32_t>::max() || mapped > std::numeric_limits<uint32_t>::max()
+        || requested > std::numeric_limits<uint32_t>::max()) {
+        SPDLOG_LOGGER_ERROR(logger, "heap alloc too large: requested=0x{:x} mapped=0x{:x}", requested, mapped);
+        return false;
+    }
+    if (!claim_global_range_locked(dev, base, requested, PtxDevice::GlobalPageUse::RuntimeAlloc)) return false;
 
     dev->next_vaddr = static_cast<uint32_t>(next);
-    dev->allocs.emplace_back(static_cast<uint32_t>(v), static_cast<uint32_t>(aligned));
-    *vaddr_out = static_cast<uint32_t>(v);
+    dev->allocs.push_back(PtxDevice::AllocationRecord{
+        static_cast<uint32_t>(base),
+        static_cast<uint32_t>(requested),
+        static_cast<uint32_t>(mapped_base),
+        static_cast<uint32_t>(mapped),
+    });
+    *vaddr_out = static_cast<uint32_t>(base);
     return true;
 }
 
 static bool find_alloc_size_locked(const PtxDevice *dev, uint32_t base_vaddr, uint32_t *size_out) {
     if (dev == nullptr || size_out == nullptr) return false;
-    for (const auto &[alloc_base, alloc_size] : dev->allocs) {
-        if (alloc_base == base_vaddr) {
-            *size_out = alloc_size;
+    for (const auto &alloc : dev->allocs) {
+        if (alloc.base_vaddr == base_vaddr) {
+            *size_out = alloc.requested_size;
             return true;
         }
     }
@@ -405,6 +665,16 @@ static bool ensure_pds_bitmap(
     }
 
     std::lock_guard<std::mutex> lock(dev->mu);
+    if (dev->pds_bitmap_vaddr != 0 && dev->pds_bitmap_size < bitmap_bytes) {
+        if (!dev->allocs.empty() && dev->allocs.back().base_vaddr == dev->pds_bitmap_vaddr) {
+            const auto old_bitmap = dev->allocs.back();
+            if (!release_alloc_record_locked(dev, old_bitmap)) return false;
+            dev->allocs.pop_back();
+            dev->next_vaddr = old_bitmap.base_vaddr;
+        }
+        dev->pds_bitmap_vaddr = 0;
+        dev->pds_bitmap_size = 0;
+    }
     if (dev->pds_bitmap_vaddr == 0 || dev->pds_bitmap_size < bitmap_bytes) {
         uint32_t new_vaddr = 0;
         if (!alloc_heap_region_locked(dev, bitmap_bytes, &new_vaddr)) return false;
@@ -413,18 +683,14 @@ static bool ensure_pds_bitmap(
     }
 
     CUdeviceptr bitmap_dev_ptr = 0;
-    if (!map_vaddr_to_devptr(dev, dev->pds_bitmap_vaddr, dev->pds_bitmap_size, &bitmap_dev_ptr)) {
+    if (!map_vaddr_to_devptr_locked(dev, dev->pds_bitmap_vaddr, dev->pds_bitmap_size, &bitmap_dev_ptr)) {
         SPDLOG_LOGGER_ERROR(
             logger, "cannot map pds bitmap vaddr=0x{:x} size=0x{:x}", dev->pds_bitmap_vaddr, dev->pds_bitmap_size
         );
         return false;
     }
-    CUresult r = cuCtxSetCurrent(dev->cu_ctx);
-    if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
-        return false;
-    }
-    r = cuMemsetD8(bitmap_dev_ptr, 0, dev->pds_bitmap_size);
+    if (!set_current_ctx(dev)) return false;
+    CUresult r = cuMemsetD8(bitmap_dev_ptr, 0, dev->pds_bitmap_size);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8(pds_bitmap) failed: {}", cu_err(r));
         return false;
@@ -436,23 +702,11 @@ static bool ensure_pds_bitmap(
     return true;
 }
 
-static bool map_vaddr_to_devptr(PtxDevice *dev, uint64_t vaddr, uint64_t size, CUdeviceptr *out) {
-    if (out == nullptr) return false;
-    if (size == 0) return false;
-
-    if (vaddr >= kVentusHeapBase) {
-        uint64_t off = vaddr - kVentusHeapBase;
-        if (off + size > dev->heap_size) return false;
-        *out = dev->heap_base + static_cast<size_t>(off);
-        return true;
-    }
-    if (vaddr >= kVentusElfBase) {
-        uint64_t off = vaddr - kVentusElfBase;
-        if (off + size > dev->elf_size) return false;
-        *out = dev->elf_base + static_cast<size_t>(off);
-        return true;
-    }
-    return false;
+static bool release_alloc_record_locked(PtxDevice *dev, const PtxDevice::AllocationRecord &alloc) {
+    if (dev == nullptr) return false;
+    return release_global_range_locked(
+        dev, alloc.mapped_base_vaddr, alloc.mapped_size, PtxDevice::GlobalPageUse::RuntimeAlloc
+    );
 }
 
 static bool get_or_jit_kernel(
@@ -571,8 +825,7 @@ static bool get_or_jit_kernel(
 
 } // namespace
 
-// Initialize CUDA and allocate a single device heap for all subsequent vt_buf_alloc.
-// Note: we zero allocations in vt_buf_alloc; the whole heap is not eagerly cleared.
+// Initialize CUDA and reserve one logical Global VA window for all subsequent mappings.
 extern "C" int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
 
@@ -637,29 +890,52 @@ extern "C" int vt_dev_open(vt_device_h *hdevice) {
         return -1;
     }
 
-    dev->elf_size = kElfSizeBytes;
-    r = cuMemAlloc(&dev->elf_base, dev->elf_size);
+    int vmm_supported = 0;
+    r = cuDeviceGetAttribute(&vmm_supported, CU_DEVICE_ATTRIBUTE_VIRTUAL_ADDRESS_MANAGEMENT_SUPPORTED, dev->cu_dev);
     if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuMemAlloc(elf) failed: {}", cu_err(r));
+        SPDLOG_LOGGER_ERROR(logger, "cuDeviceGetAttribute(VMM_SUPPORTED) failed: {}", cu_err(r));
         return -1;
     }
-    r = cuMemsetD8(dev->elf_base, 0, dev->elf_size);
+    if (vmm_supported == 0) {
+        SPDLOG_LOGGER_ERROR(logger, "ptx_device requires CUDA VMM support but the current device does not provide it");
+        return -1;
+    }
+
+    CUmemAllocationProp prop{};
+    prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+    prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+    prop.location.id = dev->cu_dev;
+    prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_NONE;
+
+    r = cuMemGetAllocationGranularity(&dev->alloc_granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM);
     if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8(elf) failed: {}", cu_err(r));
+        SPDLOG_LOGGER_ERROR(logger, "cuMemGetAllocationGranularity failed: {}", cu_err(r));
+        return -1;
+    }
+    if (dev->alloc_granularity == 0) {
+        SPDLOG_LOGGER_ERROR(logger, "cuMemGetAllocationGranularity returned 0");
+        return -1;
+    }
+
+    dev->global_size = kGlobalSizeBytes;
+    r = cuMemAddressReserve(&dev->global_base, dev->global_size, 0, 0, 0);
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "cuMemAddressReserve(global) failed: {}", cu_err(r));
         return -1;
     }
 
     dev->heap_size = heap_size_bytes();
-    r = cuMemAlloc(&dev->heap_base, dev->heap_size);
-    if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuMemAlloc failed: {}", cu_err(r));
-        return -1;
-    }
 
     PtxDevice *raw = dev.release();
     *hdevice = raw;
-    SPDLOG_LOGGER_INFO(logger, "ptx_device opened (sm={}, elf_size={} bytes, heap_size={} bytes)", static_cast<int>(raw->sm),
-                       static_cast<unsigned long long>(raw->elf_size), static_cast<unsigned long long>(raw->heap_size));
+    SPDLOG_LOGGER_INFO(
+        logger,
+        "ptx_device opened (sm={}, global_size={} bytes, heap_window={} bytes, vmm_granularity={} bytes)",
+        static_cast<int>(raw->sm),
+        static_cast<unsigned long long>(raw->global_size),
+        static_cast<unsigned long long>(raw->heap_size),
+        static_cast<unsigned long long>(raw->alloc_granularity)
+    );
     return 0;
 }
 
@@ -678,14 +954,21 @@ extern "C" int vt_dev_close(vt_device_h hdevice) {
     }
     dev->jit_cache.clear();
 
-    if (dev->heap_base) {
-        cuMemFree(dev->heap_base);
-        dev->heap_base = 0;
+    dev->allocs.clear();
+
+    std::vector<uint32_t> page_bases;
+    page_bases.reserve(dev->global_pages.size());
+    for (const auto &entry : dev->global_pages) page_bases.push_back(entry.first);
+    std::sort(page_bases.begin(), page_bases.end(), [](uint32_t lhs, uint32_t rhs) { return lhs > rhs; });
+    for (uint32_t page_vaddr : page_bases) {
+        if (!release_global_page_locked(dev, page_vaddr)) {
+            SPDLOG_LOGGER_ERROR(logger, "failed to release global page during close: vaddr=0x{:x}", page_vaddr);
+        }
     }
 
-    if (dev->elf_base) {
-        cuMemFree(dev->elf_base);
-        dev->elf_base = 0;
+    if (dev->global_base) {
+        cuMemAddressFree(dev->global_base, dev->global_size);
+        dev->global_base = 0;
     }
 
     if (dev->cu_ctx) {
@@ -736,8 +1019,8 @@ extern "C" int vt_root_mem_free(vt_device_h hdevice, int taskID) {
 
 // Allocate a Ventus "device pointer".
 //
-// For this backend we return a 32-bit virtual address in [kVentusHeapBase, kVentusHeapBase+heap_size)
-// and back it with bytes inside `heap_base`.
+// For this backend we return a 32-bit virtual address in the logical Global region.
+// Driver-side runtime allocations are still placed in [kVentusHeapBase, kVentusHeapBase+heap_size).
 extern "C" int vt_buf_alloc(
     vt_device_h hdevice, uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID,
     uint64_t kernelID
@@ -778,18 +1061,19 @@ extern "C" int vt_buf_free(
     // processing user free requests:
     // 1) freeing the owning PDS pool, or
     // 2) freeing the allocation immediately below bitmap (common LIFO teardown path).
-    if (dev->pds_bitmap_vaddr != 0 && !dev->allocs.empty() && dev->allocs.back().first == dev->pds_bitmap_vaddr) {
+    if (dev->pds_bitmap_vaddr != 0 && !dev->allocs.empty() && dev->allocs.back().base_vaddr == dev->pds_bitmap_vaddr) {
         const bool free_is_pool = (va == dev->pds_bitmap_pool_base);
         bool free_is_below_bitmap = false;
         if (dev->allocs.size() >= 2) {
-            const auto &[below_va, below_sz] = dev->allocs[dev->allocs.size() - 2];
-            free_is_below_bitmap = (below_va == va && below_sz == aligned);
+            const auto &below = dev->allocs[dev->allocs.size() - 2];
+            free_is_below_bitmap = (below.base_vaddr == va && below.requested_size == aligned);
         }
 
         if (free_is_pool || free_is_below_bitmap) {
-            const auto [internal_va, _internal_sz] = dev->allocs.back();
+            const auto internal_alloc = dev->allocs.back();
+            if (!release_alloc_record_locked(dev, internal_alloc)) return -1;
             dev->allocs.pop_back();
-            dev->next_vaddr = internal_va;
+            dev->next_vaddr = internal_alloc.base_vaddr;
             dev->pds_bitmap_vaddr = 0;
             dev->pds_bitmap_size = 0;
             dev->pds_bitmap_pool_base = 0;
@@ -805,8 +1089,9 @@ extern "C" int vt_buf_free(
     }
 
     if (!dev->allocs.empty()) {
-        const auto [last_va, last_sz] = dev->allocs.back();
-        if (last_va == va && last_sz == aligned) {
+        const auto last_alloc = dev->allocs.back();
+        if (last_alloc.base_vaddr == va && last_alloc.requested_size == aligned) {
+            if (!release_alloc_record_locked(dev, last_alloc)) return -1;
             dev->allocs.pop_back();
             dev->next_vaddr = va;
             *vaddr = 0;
@@ -837,11 +1122,7 @@ extern "C" int vt_copy_to_dev(
 
     auto *dev = static_cast<PtxDevice *>(hdevice);
     const auto perf_scope = make_scoped_event(dev, "vt_copy_to_dev");
-    CUresult r = cuCtxSetCurrent(dev->cu_ctx);
-    if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
-        return -1;
-    }
+    if (!set_current_ctx(dev)) return -1;
 
     CUdeviceptr dst{};
     if (!map_vaddr_to_devptr(dev, dev_vaddr, size, &dst)) {
@@ -849,7 +1130,7 @@ extern "C" int vt_copy_to_dev(
         return -1;
     }
 
-    r = cuMemcpyHtoD(dst, src_addr, size);
+    CUresult r = cuMemcpyHtoD(dst, src_addr, size);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuMemcpyHtoD failed: {}", cu_err(r));
         return -1;
@@ -870,11 +1151,7 @@ extern "C" int vt_copy_from_dev(
 
     auto *dev = static_cast<PtxDevice *>(hdevice);
     const auto perf_scope = make_scoped_event(dev, "vt_copy_from_dev");
-    CUresult r = cuCtxSetCurrent(dev->cu_ctx);
-    if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
-        return -1;
-    }
+    if (!set_current_ctx(dev)) return -1;
 
     CUdeviceptr src{};
     if (!map_vaddr_to_devptr(dev, dev_vaddr, size, &src)) {
@@ -882,7 +1159,7 @@ extern "C" int vt_copy_from_dev(
         return -1;
     }
 
-    r = cuMemcpyDtoH(dst_addr, src, size);
+    CUresult r = cuMemcpyDtoH(dst_addr, src, size);
     if (r != CUDA_SUCCESS) {
         SPDLOG_LOGGER_ERROR(logger, "cuMemcpyDtoH failed: {}", cu_err(r));
         return -1;
@@ -900,7 +1177,7 @@ extern "C" int vt_upload_kernel_bytes(vt_device_h device, const void *content, u
     return -1;
 }
 
-// Upload a Ventus kernel image (RISC-V ELF) into the heap.
+// Upload a Ventus kernel image (RISC-V ELF) into the Global space.
 //
 // We keep PT_LOAD copy semantics because translated PTX may read ELF globals/rodata.
 extern "C" int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int kernelID) {
@@ -926,56 +1203,51 @@ extern "C" int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, 
         return 0;
     }
 
-    CUresult r = cuCtxSetCurrent(dev->cu_ctx);
-    if (r != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_ERROR(logger, "cuCtxSetCurrent failed: {}", cu_err(r));
-        return -1;
-    }
+    if (!set_current_ctx(dev)) return -1;
 
     for (const auto &b : blocks) {
         if (b.memsz == 0) continue;
-
-        CUdeviceptr base{};
-        uint64_t off = 0;
-        size_t region_size = 0;
-        if (b.vaddr >= kVentusHeapBase) {
-            base = dev->heap_base;
-            off = b.vaddr - kVentusHeapBase;
-            region_size = dev->heap_size;
-        } else if (b.vaddr >= kVentusElfBase) {
-            base = dev->elf_base;
-            off = b.vaddr - kVentusElfBase;
-            region_size = dev->elf_size;
-        } else {
-            SPDLOG_LOGGER_WARN(logger, "ELF segment vaddr 0x{:x} below ELF_BASE, skipping", b.vaddr);
+        if (b.vaddr < kVentusGlobalBase) {
+            SPDLOG_LOGGER_WARN(logger, "ELF segment vaddr 0x{:x} below GLOBAL_BASE, skipping", b.vaddr);
             continue;
         }
 
-        if (off + b.memsz > region_size) {
-            SPDLOG_LOGGER_ERROR(logger, "ELF segment out of backing: vaddr=0x{:x} memsz=0x{:x}", b.vaddr, b.memsz);
-            return -1;
+        CUdeviceptr dst{};
+        {
+            std::lock_guard<std::mutex> lock(dev->mu);
+            if (!claim_global_range_locked(dev, b.vaddr, b.memsz, PtxDevice::GlobalPageUse::ElfImage)) return -1;
+            if (!map_vaddr_to_devptr_locked(dev, b.vaddr, b.memsz, &dst)) {
+                SPDLOG_LOGGER_ERROR(logger, "ELF segment cannot resolve mapped ptr: vaddr=0x{:x} memsz=0x{:x}", b.vaddr, b.memsz);
+                return -1;
+            }
+            if (b.vaddr >= kVentusHeapBase) {
+                const uint64_t heap_limit = static_cast<uint64_t>(kVentusHeapBase) + dev->heap_size;
+                if (static_cast<uint64_t>(b.vaddr) < heap_limit) {
+                    const uint64_t end = static_cast<uint64_t>(b.vaddr) + b.memsz;
+                    const uint64_t covered_end = std::min<uint64_t>(end, heap_limit);
+                    const uint64_t next = align_up_u64(covered_end, 16);
+                    const uint32_t next_vaddr = next > std::numeric_limits<uint32_t>::max()
+                        ? std::numeric_limits<uint32_t>::max()
+                        : static_cast<uint32_t>(next);
+                    if (next_vaddr > dev->next_vaddr) dev->next_vaddr = next_vaddr;
+                }
+            }
         }
 
         if (!b.data.empty()) {
-            r = cuMemcpyHtoD(base + static_cast<size_t>(off), b.data.data(), b.data.size());
+            const CUresult r = cuMemcpyHtoD(dst, b.data.data(), b.data.size());
             if (r != CUDA_SUCCESS) {
                 SPDLOG_LOGGER_ERROR(logger, "cuMemcpyHtoD(elf) failed: {}", cu_err(r));
                 return -1;
             }
         }
         if (b.memsz > b.data.size()) {
-            size_t zlen = b.memsz - b.data.size();
-            r = cuMemsetD8(base + static_cast<size_t>(off) + b.data.size(), 0, zlen);
+            const size_t zlen = b.memsz - b.data.size();
+            const CUresult r = cuMemsetD8(dst + b.data.size(), 0, zlen);
             if (r != CUDA_SUCCESS) {
-                SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8(elf) failed: {}", cu_err(r));
+                SPDLOG_LOGGER_ERROR(logger, "cuMemsetD8(global) failed: {}", cu_err(r));
                 return -1;
             }
-        }
-
-        if (b.vaddr >= kVentusHeapBase) {
-            const uint64_t end = b.vaddr + b.memsz;
-            std::lock_guard<std::mutex> lock(dev->mu);
-            if (end > dev->next_vaddr) dev->next_vaddr = static_cast<uint32_t>(align_up_u64(end, 16));
         }
     }
 
@@ -1149,10 +1421,9 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
         cuFuncSetAttribute(fun, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, static_cast<int>(shmem_bytes_u64));
     }
 
-    CUdeviceptr elf_base = dev->elf_base;
-    CUdeviceptr heap_base = dev->heap_base;
+    CUdeviceptr global_base = dev->global_base;
     void *params[] = {
-        &elf_base, &heap_base, &knl_vaddr, &pds_base_vaddr, &pds_size_per_thread,
+        &global_base, &knl_vaddr, &pds_base_vaddr, &pds_size_per_thread,
         &pds_bitmap_base_vaddr, &pds_pool_num_blocks
     };
 
