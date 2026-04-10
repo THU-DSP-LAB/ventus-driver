@@ -327,7 +327,7 @@ struct PtxDevice {
     };
     std::unordered_map<std::string, KernelJitEntry> jit_cache;
 
-    int sm = 75;
+    int sm = 89;
 
     std::mutex mu;
     std::unique_ptr<vtperf::Recorder> perf_recorder;
@@ -865,14 +865,16 @@ extern "C" int vt_dev_open(vt_device_h *hdevice) {
     const CUresult rmaj = cuDeviceGetAttribute(&cc_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev->cu_dev);
     const CUresult rmin = cuDeviceGetAttribute(&cc_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, dev->cu_dev);
     if (rmaj != CUDA_SUCCESS || rmin != CUDA_SUCCESS) {
-        SPDLOG_LOGGER_WARN(logger, "cuDeviceGetAttribute(CC) failed: major={} minor={} (fallback sm=75)", cu_err(rmaj), cu_err(rmin));
-        dev->sm = 75;
+        SPDLOG_LOGGER_WARN(logger, "cuDeviceGetAttribute(CC) failed: major={} minor={} (fallback sm=89)", cu_err(rmaj), cu_err(rmin));
+        dev->sm = 89;
     } else {
         const int device_sm = cc_major * 10 + cc_minor;
-        // PTX emitter currently outputs ".version 7.0". Keep target conservative for compatibility.
         const int env_sm = parse_int_env("VENTUS_PTX_SM", parse_int_env("GPU_SBT_SM", 0));
         if (env_sm > 0) dev->sm = env_sm;
-        else dev->sm = std::min(device_sm, 75);
+        else dev->sm = 89;
+        if (env_sm <= 0 && device_sm < dev->sm) {
+            SPDLOG_LOGGER_WARN(logger, "device compute capability sm_{} is below the repo baseline sm_{}; keeping baseline and allowing failure to surface", device_sm, dev->sm);
+        }
     }
 
     int sm_count = 0;
