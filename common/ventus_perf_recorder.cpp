@@ -39,6 +39,7 @@ bool detail_level_records_all(std::string_view value) {
 
 bool default_detail_keeps_event(std::string_view stream, std::string_view event_type) {
     if (event_type == "kernel_submit" || event_type == "kernel_wait") return true;
+    if (event_type == "compiler") return stream == "pocl";
     if (event_type == "buffer_write" || event_type == "buffer_read" ||
         event_type == "buffer_copy" || event_type == "buffer_fill" ||
         event_type == "map_mem" || event_type == "unmap_mem") {

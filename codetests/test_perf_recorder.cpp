@@ -62,6 +62,14 @@ static void test_default_detail_skips_high_frequency_driver_events() {
   kept.ts_end_ns = 40;
   recorder.write_event(kept);
   if (!fs::exists(out_dir / "events.pocl.jsonl")) std::abort();
+
+  vtperf::CompleteEvent compiler;
+  compiler.stream = "pocl";
+  compiler.event_type = "compiler";
+  compiler.ts_start_ns = 40;
+  compiler.ts_end_ns = 80;
+  recorder.write_event(compiler);
+  if (!fs::exists(out_dir / "events.pocl.jsonl")) std::abort();
 }
 
 static void test_scope_parentage_and_launch_sequence() {
