@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -271,6 +272,126 @@ static uint64_t align_down_u64(uint64_t x, uint64_t a) {
     return x & ~(a - 1);
 }
 
+class PtxHeapAllocator final {
+public:
+    static constexpr uint32_t kAllocAlignment = 16u;
+
+    bool init(uint32_t base_vaddr, uint32_t heap_size_bytes) {
+        free_ranges_.clear();
+        if (heap_size_bytes == 0) return false;
+        base_vaddr_ = base_vaddr;
+        heap_size_bytes_ = heap_size_bytes;
+        free_ranges_.emplace(base_vaddr, heap_size_bytes);
+        return true;
+    }
+
+    bool allocate(uint32_t size, uint32_t *base_vaddr_out) {
+        if (base_vaddr_out == nullptr || size == 0) return false;
+        const uint32_t aligned_size = static_cast<uint32_t>(align_up_u64(size, kAllocAlignment));
+        for (auto it = free_ranges_.begin(); it != free_ranges_.end(); ++it) {
+            const uint32_t range_base = it->first;
+            const uint32_t range_size = it->second;
+            const uint32_t aligned_base = static_cast<uint32_t>(align_up_u64(range_base, kAllocAlignment));
+            if (aligned_base < range_base) continue;
+            const uint64_t padding = static_cast<uint64_t>(aligned_base) - range_base;
+            if (padding > range_size) continue;
+            const uint64_t usable_size = static_cast<uint64_t>(range_size) - padding;
+            if (aligned_size > usable_size) continue;
+
+            free_ranges_.erase(it);
+            if (padding != 0) free_ranges_.emplace(range_base, static_cast<uint32_t>(padding));
+            const uint64_t alloc_end = static_cast<uint64_t>(aligned_base) + aligned_size;
+            const uint64_t range_end = static_cast<uint64_t>(range_base) + range_size;
+            if (alloc_end < range_end) {
+                free_ranges_.emplace(static_cast<uint32_t>(alloc_end), static_cast<uint32_t>(range_end - alloc_end));
+            }
+            *base_vaddr_out = aligned_base;
+            return true;
+        }
+        return false;
+    }
+
+    bool reserve(uint32_t base_vaddr, uint32_t size) {
+        if (size == 0) return false;
+        const uint64_t reserve_begin = base_vaddr;
+        const uint64_t reserve_end = reserve_begin + size;
+        if (reserve_end <= base_vaddr_) return true;
+        const uint64_t heap_end = static_cast<uint64_t>(base_vaddr_) + heap_size_bytes_;
+        if (reserve_begin >= heap_end) return true;
+
+        const uint32_t clipped_begin = static_cast<uint32_t>(std::max<uint64_t>(reserve_begin, base_vaddr_));
+        const uint32_t clipped_end = static_cast<uint32_t>(std::min<uint64_t>(reserve_end, heap_end));
+        if (clipped_begin >= clipped_end) return true;
+
+        auto it = free_ranges_.upper_bound(clipped_begin);
+        if (it != free_ranges_.begin()) --it;
+        while (it != free_ranges_.end()) {
+            const uint32_t range_base = it->first;
+            const uint32_t range_size = it->second;
+            const uint64_t range_end = static_cast<uint64_t>(range_base) + range_size;
+            if (range_end <= clipped_begin) {
+                ++it;
+                continue;
+            }
+            if (range_base >= clipped_end) break;
+
+            const uint32_t overlap_begin = std::max(range_base, clipped_begin);
+            const uint32_t overlap_end = std::min<uint32_t>(static_cast<uint32_t>(range_end), clipped_end);
+
+            it = free_ranges_.erase(it);
+            if (range_base < overlap_begin) free_ranges_.emplace(range_base, overlap_begin - range_base);
+            if (overlap_end < range_end) {
+                free_ranges_.emplace(overlap_end, static_cast<uint32_t>(range_end - overlap_end));
+            }
+            it = free_ranges_.lower_bound(overlap_end);
+            if (it != free_ranges_.begin()) --it;
+        }
+        return true;
+    }
+
+    bool free(uint32_t base_vaddr, uint32_t size) {
+        if (size == 0) return false;
+        const uint32_t aligned_size = static_cast<uint32_t>(align_up_u64(size, kAllocAlignment));
+        const uint64_t end = static_cast<uint64_t>(base_vaddr) + aligned_size;
+        const uint64_t heap_end = static_cast<uint64_t>(base_vaddr_) + heap_size_bytes_;
+        if (base_vaddr < base_vaddr_ || end > heap_end) return false;
+
+        auto next = free_ranges_.lower_bound(base_vaddr);
+        if (next != free_ranges_.end() && end > next->first) return false;
+
+        uint32_t merged_base = base_vaddr;
+        uint32_t merged_size = aligned_size;
+        if (next != free_ranges_.begin()) {
+            auto prev = std::prev(next);
+            const uint64_t prev_end = static_cast<uint64_t>(prev->first) + prev->second;
+            if (base_vaddr < prev_end) return false;
+            if (base_vaddr == prev_end) {
+                merged_base = prev->first;
+                merged_size = prev->second + aligned_size;
+                free_ranges_.erase(prev);
+            }
+        }
+
+        next = free_ranges_.lower_bound(base_vaddr);
+        if (next != free_ranges_.end()) {
+            const uint64_t merged_end = static_cast<uint64_t>(merged_base) + merged_size;
+            if (merged_end > next->first) return false;
+            if (merged_end == next->first) {
+                merged_size += next->second;
+                free_ranges_.erase(next);
+            }
+        }
+
+        free_ranges_.emplace(merged_base, merged_size);
+        return true;
+    }
+
+private:
+    uint32_t base_vaddr_ = 0;
+    uint32_t heap_size_bytes_ = 0;
+    std::map<uint32_t, uint32_t> free_ranges_;
+};
+
 // Per-process device state.
 //
 // Notes:
@@ -284,8 +405,7 @@ struct PtxDevice {
     size_t global_size{};
     size_t alloc_granularity{};
     size_t heap_size{};
-
-    uint32_t next_vaddr = kVentusHeapBase;
+    PtxHeapAllocator heap_allocator;
 
     enum class GlobalPageUse {
         ElfImage,
@@ -301,12 +421,18 @@ struct PtxDevice {
     struct AllocationRecord final {
         uint32_t base_vaddr = 0;
         uint32_t requested_size = 0;
+        uint32_t reserved_size = 0;
         uint32_t mapped_base_vaddr = 0;
         uint32_t mapped_size = 0;
+
+        enum class Kind {
+            UserBuffer,
+            InternalPdsBitmap,
+        } kind = Kind::UserBuffer;
     };
 
     std::unordered_map<uint32_t, GlobalPage> global_pages;
-    std::vector<AllocationRecord> allocs;
+    std::unordered_map<uint32_t, AllocationRecord> allocs;
 
     // PTX backend internal PDS bitmap backing (u32 bitmap words in Ventus heap).
     uint32_t pds_bitmap_vaddr = 0;
@@ -373,6 +499,7 @@ static std::unique_ptr<vtperf::ScopedEvent> make_scoped_event(
 static bool map_vaddr_to_devptr(PtxDevice *dev, uint64_t vaddr, uint64_t size, CUdeviceptr *out);
 static bool map_vaddr_to_devptr_locked(PtxDevice *dev, uint64_t vaddr, uint64_t size, CUdeviceptr *out);
 static bool release_alloc_record_locked(PtxDevice *dev, const PtxDevice::AllocationRecord &alloc);
+static bool erase_alloc_record_locked(PtxDevice *dev, uint32_t base_vaddr);
 
 static const char *global_page_use_name(PtxDevice::GlobalPageUse use) {
     switch (use) {
@@ -608,44 +735,48 @@ static bool map_vaddr_to_devptr(PtxDevice *dev, uint64_t vaddr, uint64_t size, C
 static bool alloc_heap_region_locked(PtxDevice *dev, uint64_t size, uint32_t *vaddr_out) {
     if (dev == nullptr || vaddr_out == nullptr || size == 0) return false;
 
-    const uint64_t requested = align_up_u64(size, 16);
-    const uint64_t base = align_up_u64(dev->next_vaddr, 16);
-    const uint64_t next = base + requested;
-    const uint64_t off = base - kVentusHeapBase;
-    if (off > dev->heap_size || requested > dev->heap_size - off) {
-        SPDLOG_LOGGER_ERROR(logger, "heap alloc out of range: size=0x{:x}", size);
+    const uint64_t requested = align_up_u64(size, PtxHeapAllocator::kAllocAlignment);
+    if (requested > std::numeric_limits<uint32_t>::max()) {
+        SPDLOG_LOGGER_ERROR(logger, "heap alloc too large: requested=0x{:x}", requested);
+        return false;
+    }
+    uint32_t base = 0;
+    if (!dev->heap_allocator.allocate(static_cast<uint32_t>(requested), &base)) {
+        SPDLOG_LOGGER_ERROR(logger, "heap alloc failed: size=0x{:x}", size);
         return false;
     }
     const uint64_t mapped_base = align_down_u64(base, dev->alloc_granularity);
-    const uint64_t mapped_end = align_up_u64(next, dev->alloc_granularity);
+    const uint64_t mapped_end = align_up_u64(static_cast<uint64_t>(base) + requested, dev->alloc_granularity);
     const uint64_t mapped = mapped_end - mapped_base;
     if (mapped_base > std::numeric_limits<uint32_t>::max() || mapped > std::numeric_limits<uint32_t>::max()
         || requested > std::numeric_limits<uint32_t>::max()) {
         SPDLOG_LOGGER_ERROR(logger, "heap alloc too large: requested=0x{:x} mapped=0x{:x}", requested, mapped);
+        dev->heap_allocator.free(base, static_cast<uint32_t>(requested));
         return false;
     }
-    if (!claim_global_range_locked(dev, base, requested, PtxDevice::GlobalPageUse::RuntimeAlloc)) return false;
+    if (!claim_global_range_locked(dev, base, requested, PtxDevice::GlobalPageUse::RuntimeAlloc)) {
+        dev->heap_allocator.free(base, static_cast<uint32_t>(requested));
+        return false;
+    }
 
-    dev->next_vaddr = static_cast<uint32_t>(next);
-    dev->allocs.push_back(PtxDevice::AllocationRecord{
-        static_cast<uint32_t>(base),
+    dev->allocs[base] = PtxDevice::AllocationRecord{
+        base,
+        static_cast<uint32_t>(requested),
         static_cast<uint32_t>(requested),
         static_cast<uint32_t>(mapped_base),
         static_cast<uint32_t>(mapped),
-    });
-    *vaddr_out = static_cast<uint32_t>(base);
+        PtxDevice::AllocationRecord::Kind::UserBuffer,
+    };
+    *vaddr_out = base;
     return true;
 }
 
 static bool find_alloc_size_locked(const PtxDevice *dev, uint32_t base_vaddr, uint32_t *size_out) {
     if (dev == nullptr || size_out == nullptr) return false;
-    for (const auto &alloc : dev->allocs) {
-        if (alloc.base_vaddr == base_vaddr) {
-            *size_out = alloc.requested_size;
-            return true;
-        }
-    }
-    return false;
+    const auto it = dev->allocs.find(base_vaddr);
+    if (it == dev->allocs.end()) return false;
+    *size_out = it->second.requested_size;
+    return true;
 }
 
 static bool ensure_pds_bitmap(
@@ -666,20 +797,23 @@ static bool ensure_pds_bitmap(
 
     std::lock_guard<std::mutex> lock(dev->mu);
     if (dev->pds_bitmap_vaddr != 0 && dev->pds_bitmap_size < bitmap_bytes) {
-        if (!dev->allocs.empty() && dev->allocs.back().base_vaddr == dev->pds_bitmap_vaddr) {
-            const auto old_bitmap = dev->allocs.back();
-            if (!release_alloc_record_locked(dev, old_bitmap)) return false;
-            dev->allocs.pop_back();
-            dev->next_vaddr = old_bitmap.base_vaddr;
-        }
+        if (!erase_alloc_record_locked(dev, dev->pds_bitmap_vaddr)) return false;
         dev->pds_bitmap_vaddr = 0;
         dev->pds_bitmap_size = 0;
+        dev->pds_bitmap_pool_base = 0;
+        dev->pds_bitmap_pool_blocks = 0;
     }
     if (dev->pds_bitmap_vaddr == 0 || dev->pds_bitmap_size < bitmap_bytes) {
         uint32_t new_vaddr = 0;
         if (!alloc_heap_region_locked(dev, bitmap_bytes, &new_vaddr)) return false;
         dev->pds_bitmap_vaddr = new_vaddr;
         dev->pds_bitmap_size = static_cast<uint32_t>(align_up_u64(bitmap_bytes, 16));
+        auto it = dev->allocs.find(new_vaddr);
+        if (it == dev->allocs.end()) {
+            SPDLOG_LOGGER_ERROR(logger, "cannot find newly allocated pds bitmap record: vaddr=0x{:x}", new_vaddr);
+            return false;
+        }
+        it->second.kind = PtxDevice::AllocationRecord::Kind::InternalPdsBitmap;
     }
 
     CUdeviceptr bitmap_dev_ptr = 0;
@@ -707,6 +841,26 @@ static bool release_alloc_record_locked(PtxDevice *dev, const PtxDevice::Allocat
     return release_global_range_locked(
         dev, alloc.mapped_base_vaddr, alloc.mapped_size, PtxDevice::GlobalPageUse::RuntimeAlloc
     );
+}
+
+static bool erase_alloc_record_locked(PtxDevice *dev, uint32_t base_vaddr) {
+    if (dev == nullptr) return false;
+    const auto it = dev->allocs.find(base_vaddr);
+    if (it == dev->allocs.end()) {
+        SPDLOG_LOGGER_ERROR(logger, "allocation record missing during free: vaddr=0x{:x}", base_vaddr);
+        return false;
+    }
+    const auto alloc = it->second;
+    if (!release_alloc_record_locked(dev, alloc)) return false;
+    if (!dev->heap_allocator.free(alloc.base_vaddr, alloc.reserved_size)) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "heap free failed: vaddr=0x{:x} size=0x{:x}",
+            alloc.base_vaddr, static_cast<uint64_t>(alloc.reserved_size)
+        );
+        return false;
+    }
+    dev->allocs.erase(it);
+    return true;
 }
 
 static bool get_or_jit_kernel(
@@ -927,6 +1081,14 @@ extern "C" int vt_dev_open(vt_device_h *hdevice) {
     }
 
     dev->heap_size = heap_size_bytes();
+    if (dev->heap_size > std::numeric_limits<uint32_t>::max()) {
+        SPDLOG_LOGGER_ERROR(logger, "heap window too large for u32 allocator: {}", dev->heap_size);
+        return -1;
+    }
+    if (!dev->heap_allocator.init(kVentusHeapBase, static_cast<uint32_t>(dev->heap_size))) {
+        SPDLOG_LOGGER_ERROR(logger, "failed to initialize heap allocator");
+        return -1;
+    }
 
     PtxDevice *raw = dev.release();
     *hdevice = raw;
@@ -1055,53 +1217,42 @@ extern "C" int vt_buf_free(
     std::lock_guard<std::mutex> lock(dev->mu);
 
     const uint32_t va = static_cast<uint32_t>(*vaddr);
-    const uint32_t aligned = static_cast<uint32_t>(align_up_u64(size, 16));
+    const uint32_t aligned = static_cast<uint32_t>(align_up_u64(size, PtxHeapAllocator::kAllocAlignment));
 
-    // Internal scratch lifecycle contract:
-    // pds_bitmap is internal memory associated with a specific PDS pool.
-    // It should not leak into user-visible free semantics. When safe, we pop it before
-    // processing user free requests:
-    // 1) freeing the owning PDS pool, or
-    // 2) freeing the allocation immediately below bitmap (common LIFO teardown path).
-    if (dev->pds_bitmap_vaddr != 0 && !dev->allocs.empty() && dev->allocs.back().base_vaddr == dev->pds_bitmap_vaddr) {
-        const bool free_is_pool = (va == dev->pds_bitmap_pool_base);
-        bool free_is_below_bitmap = false;
-        if (dev->allocs.size() >= 2) {
-            const auto &below = dev->allocs[dev->allocs.size() - 2];
-            free_is_below_bitmap = (below.base_vaddr == va && below.requested_size == aligned);
-        }
-
-        if (free_is_pool || free_is_below_bitmap) {
-            const auto internal_alloc = dev->allocs.back();
-            if (!release_alloc_record_locked(dev, internal_alloc)) return -1;
-            dev->allocs.pop_back();
-            dev->next_vaddr = internal_alloc.base_vaddr;
-            dev->pds_bitmap_vaddr = 0;
-            dev->pds_bitmap_size = 0;
-            dev->pds_bitmap_pool_base = 0;
-            dev->pds_bitmap_pool_blocks = 0;
-        } else if (va == dev->pds_bitmap_vaddr) {
-            SPDLOG_LOGGER_ERROR(
-                logger,
-                "vt_buf_free attempted to free internal pds bitmap directly (va=0x{:x} size=0x{:x})",
-                va, static_cast<uint64_t>(size)
-            );
-            return -1;
-        }
+    if (va == dev->pds_bitmap_vaddr) {
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "vt_buf_free attempted to free internal pds bitmap directly (va=0x{:x} size=0x{:x})",
+            va, static_cast<uint64_t>(size)
+        );
+        return -1;
     }
 
-    if (!dev->allocs.empty()) {
-        const auto last_alloc = dev->allocs.back();
-        if (last_alloc.base_vaddr == va && last_alloc.requested_size == aligned) {
-            if (!release_alloc_record_locked(dev, last_alloc)) return -1;
-            dev->allocs.pop_back();
-            dev->next_vaddr = va;
-            *vaddr = 0;
-            return 0;
-        }
+    if (dev->pds_bitmap_vaddr != 0 && va == dev->pds_bitmap_pool_base) {
+        if (!erase_alloc_record_locked(dev, dev->pds_bitmap_vaddr)) return -1;
+        dev->pds_bitmap_vaddr = 0;
+        dev->pds_bitmap_size = 0;
+        dev->pds_bitmap_pool_base = 0;
+        dev->pds_bitmap_pool_blocks = 0;
     }
 
-    SPDLOG_LOGGER_WARN(logger, "vt_buf_free non-LIFO (ignored): vaddr=0x{:x} size=0x{:x}", va, static_cast<uint64_t>(size));
+    const auto it = dev->allocs.find(va);
+    if (it == dev->allocs.end()) {
+        SPDLOG_LOGGER_ERROR(logger, "vt_buf_free unknown allocation: vaddr=0x{:x} size=0x{:x}", va, size);
+        return -1;
+    }
+    if (it->second.kind != PtxDevice::AllocationRecord::Kind::UserBuffer) {
+        SPDLOG_LOGGER_ERROR(logger, "vt_buf_free rejected internal allocation: vaddr=0x{:x}", va);
+        return -1;
+    }
+    if (it->second.requested_size != aligned) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_buf_free size mismatch: vaddr=0x{:x} requested=0x{:x} got=0x{:x}",
+            va, static_cast<uint64_t>(it->second.requested_size), static_cast<uint64_t>(aligned)
+        );
+        return -1;
+    }
+    if (!erase_alloc_record_locked(dev, va)) return -1;
     *vaddr = 0;
     return 0;
 }
@@ -1224,14 +1375,22 @@ extern "C" int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, 
             }
             if (b.vaddr >= kVentusHeapBase) {
                 const uint64_t heap_limit = static_cast<uint64_t>(kVentusHeapBase) + dev->heap_size;
-                if (static_cast<uint64_t>(b.vaddr) < heap_limit) {
-                    const uint64_t end = static_cast<uint64_t>(b.vaddr) + b.memsz;
-                    const uint64_t covered_end = std::min<uint64_t>(end, heap_limit);
-                    const uint64_t next = align_up_u64(covered_end, 16);
-                    const uint32_t next_vaddr = next > std::numeric_limits<uint32_t>::max()
-                        ? std::numeric_limits<uint32_t>::max()
-                        : static_cast<uint32_t>(next);
-                    if (next_vaddr > dev->next_vaddr) dev->next_vaddr = next_vaddr;
+                const uint64_t clipped_end = std::min<uint64_t>(static_cast<uint64_t>(b.vaddr) + b.memsz, heap_limit);
+                const uint64_t reserve_size = clipped_end > b.vaddr ? (clipped_end - b.vaddr) : 0;
+                if (reserve_size > std::numeric_limits<uint32_t>::max()) {
+                    SPDLOG_LOGGER_ERROR(
+                        logger, "ELF segment overlap too large for heap reservation: vaddr=0x{:x} memsz=0x{:x}",
+                        b.vaddr, b.memsz
+                    );
+                    return -1;
+                }
+                if (reserve_size != 0
+                    && !dev->heap_allocator.reserve(static_cast<uint32_t>(b.vaddr), static_cast<uint32_t>(reserve_size))) {
+                    SPDLOG_LOGGER_ERROR(
+                        logger, "failed to reserve heap overlap for ELF segment: vaddr=0x{:x} memsz=0x{:x}",
+                        b.vaddr, b.memsz
+                    );
+                    return -1;
                 }
             }
         }
