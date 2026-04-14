@@ -23,10 +23,25 @@ static std::map<int, uint64_t> g_ptroots; // pagetable root physical address
 static std::shared_ptr<spdlog::logger> logger;
 static uint64_t g_alloc_vaddr = 0x90000000;
 static std::vector<std::pair<vaddr_t, size_t>> g_elf_alloc;
+static uint64_t g_kernel_launch_id = 0;
+static uint64_t g_software_wg_id_base = 0;
+
+static bool cyclesim_driver_gvm_enabled() {
+    const char* env = std::getenv("ENABLE_CYCLESIM_GVM");
+    if (env == nullptr) return false;
+    return std::string(env) == "1" || std::string(env) == "true" || std::string(env) == "TRUE"
+        || std::string(env) == "on" || std::string(env) == "ON";
+}
 
 /// open the device and connect to it
 extern int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
+    if (cyclesim_driver_gvm_enabled()) {
+        g_kernel_launch_id = 0;
+        g_software_wg_id_base = 0;
+        ventus_cyclesim_gvm_reset_kernel_wg_id_base();
+        fw_vt_dev_open();
+    }
     ventus_cyclesim_config_t config;
     ventus_cyclesim_get_default_config(&config);
     config.sim_time_max = ~0ull;
@@ -55,6 +70,9 @@ extern int vt_dev_close(vt_device_h hdevice) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     ventus_cyclesim_finish(device, false);
+    if (cyclesim_driver_gvm_enabled()) {
+        fw_vt_dev_close();
+    }
     SPDLOG_LOGGER_DEBUG(logger, "vt_dev_close: goodbye from ventus.cpp (cyclesim device)");
     return 0;
 }
@@ -95,12 +113,38 @@ extern int vt_buf_alloc(
 ) {
     if (size <= 0 || hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
+    uint64_t alloc_hint = g_alloc_vaddr;
+    if (cyclesim_driver_gvm_enabled()) {
+        uint64_t ref_vaddr = 0;
+        if (fw_vt_buf_alloc(size, &ref_vaddr, BUF_TYPE, taskID, kernelID) != 0 || ref_vaddr == 0) {
+            SPDLOG_LOGGER_ERROR(
+                logger,
+                "vt_buf_alloc: REF allocation failed, size=0x{:x}, taskID={}, kernelID={}",
+                size, taskID, kernelID
+            );
+            return -1;
+        }
+        alloc_hint = ref_vaddr;
+    }
     uint64_t vaddr_allocated =
-        ventus_cyclesim_vmem_alloc(device, g_ptroots[taskID], g_alloc_vaddr, size);
+        ventus_cyclesim_vmem_alloc(device, g_ptroots[taskID], alloc_hint, size);
     SPDLOG_LOGGER_DEBUG(
         logger, "vt_buf_alloc: vaddr_recommand={:x}, vaddr_allocated={:x}, size=0x{:x}, taskID={}",
-        *vaddr, vaddr_allocated, size, taskID
+        alloc_hint, vaddr_allocated, size, taskID
     );
+    if (cyclesim_driver_gvm_enabled() && vaddr_allocated != alloc_hint) {
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "vt_buf_alloc: DUT/REF address mismatch, ref_vaddr=0x{:x}, dut_vaddr=0x{:x}, size=0x{:x}, taskID={}, kernelID={}",
+            alloc_hint, vaddr_allocated, size, taskID, kernelID
+        );
+        uint64_t rollback_vaddr = alloc_hint;
+        fw_vt_buf_free(size, &rollback_vaddr, taskID, kernelID);
+        if (vaddr_allocated != 0) {
+            ventus_cyclesim_vmem_free(device, g_ptroots[taskID], vaddr_allocated, size);
+        }
+        return -1;
+    }
     g_alloc_vaddr += (size > 0x1000) ? size : 0x1000;
     *vaddr = vaddr_allocated;
     if (*vaddr == 0) return -1;
@@ -113,6 +157,9 @@ extern int vt_buf_free(
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     ventus_cyclesim_vmem_free(device, g_ptroots[taskID], *vaddr, size);
+    if (cyclesim_driver_gvm_enabled()) {
+        fw_vt_buf_free(size, vaddr, taskID, kernelID);
+    }
     SPDLOG_LOGGER_DEBUG(
         logger, "vt_buf_free: vaddr=0x{:x}, size=0x{:x}, taskID={}", *vaddr, size, taskID
     );
@@ -125,6 +172,9 @@ extern int vt_one_buf_free(
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     ventus_cyclesim_vmem_free(device, g_ptroots[taskID], *vaddr, size);
+    if (cyclesim_driver_gvm_enabled()) {
+        fw_vt_one_buf_free(size, vaddr, taskID, kernelID);
+    }
     SPDLOG_LOGGER_DEBUG(
         logger, "vt_buf_free: vaddr=0x{:x}, size=0x{:x}, taskID={}", *vaddr, size, taskID
     );
@@ -180,6 +230,9 @@ extern int vt_copy_to_dev(
         logger, "vt_copy_to_dev: dev_vaddr={:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
         size, taskID, kernelID
     );
+    if (cyclesim_driver_gvm_enabled()) {
+        fw_vt_copy_to_dev(dev_vaddr, src_addr, size, taskID, kernelID);
+    }
     ventus_cyclesim_vmemcpy_h2d(device, g_ptroots[taskID], dev_vaddr, src_addr, size);
     return 0;
 }
@@ -202,10 +255,14 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
     if (hdevice == nullptr || mtd_driver == nullptr) return -1;
     auto device = static_cast<ventus_cyclesim_t *>(hdevice);
     static uint32_t kernel_cnt = 0;
+    const uint64_t kernel_wg_count =
+        mtd_driver->kernel_size[0] * mtd_driver->kernel_size[1] * mtd_driver->kernel_size[2];
+    const uint64_t cyclesim_kernel_id
+        = cyclesim_driver_gvm_enabled() ? g_kernel_launch_id++ : kernel_cnt++;
     ventus_kernel_metadata_t mtd_sim{
         .name = mtd_driver->kernel_name,
         // .kernel_id = mtd_driver->kernel_id,
-        .kernel_id = kernel_cnt++,
+        .kernel_id = cyclesim_kernel_id,
         .data = nullptr,
         .startaddr = 0x80000000,
         .kernel_size =
@@ -233,6 +290,15 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
         .buffer_allocsize = nullptr,
         .pagetable = g_ptroots[taskID],
     };
+    if (cyclesim_driver_gvm_enabled()) {
+        ventus_cyclesim_gvm_set_kernel_wg_id_base(cyclesim_kernel_id, g_software_wg_id_base);
+        g_software_wg_id_base += kernel_wg_count;
+        fw_vt_start(mtd_driver, taskID);
+        SPDLOG_LOGGER_DEBUG(
+            logger, "gvm sidecar: cyclesim_kernel_id={}, software_wg_id_base={}",
+            cyclesim_kernel_id, g_software_wg_id_base - kernel_wg_count
+        );
+    }
     ventus_cyclesim_add_kernel(device, &mtd_sim, nullptr);
     SPDLOG_LOGGER_DEBUG(
         logger,
@@ -265,6 +331,9 @@ extern int vt_finish_all_kernel(vt_device_h hdevice, std::queue<int> *finished_k
 
 extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int taskID) {
     if (hdevice == nullptr) return -1;
+    if (cyclesim_driver_gvm_enabled()) {
+        fw_vt_upload_kernel_file(filename, taskID);
+    }
     auto device = (ventus_cyclesim_t *)hdevice;
     uint64_t ptroot = g_ptroots[taskID];
 

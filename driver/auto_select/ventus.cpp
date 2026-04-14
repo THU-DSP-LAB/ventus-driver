@@ -145,37 +145,48 @@ vt_api_t load_backend() {
     std::filesystem::path self_path(info.dli_fname);
     self_path = self_path.parent_path(); // 获取当前库所在目录
 
+    auto create_symlink = [&](const std::string& link_name, const std::string& soname) {
+        namespace fs = std::filesystem;
+        fs::path target = self_path / link_name;
+        std::error_code err;
+        if (fs::exists(target, err) || fs::is_symlink(target, err)) {
+            fs::remove(target, err);
+        }
+        if (!err) {
+            fs::create_symlink(soname, target, err);
+        }
+        if (err) {
+            SPDLOG_ERROR("Ventus driver: ln -sf failed: {}", fs::filesystem_error("", err).what());
+        }
+    };
+
+    std::unordered_set<std::string> nocache = {"nocache", "withoutcache", "without"};
+    std::unordered_set<std::string> withcache = {"cache", "withcache", "with"};
+
+    auto select_cache_variant = [&](const std::string& link_name, const std::string& default_soname,
+                                    const std::string& nocache_soname) {
+        if (backend_split.size() <= 1 || withcache.count(backend_split[1])) {
+            create_symlink(link_name, default_soname);
+        } else if (nocache.count(backend_split[1])) {
+            create_symlink(link_name, nocache_soname);
+        }
+    };
+
+    // 根据 VENTUS_BACKEND 指定使用有/无 cache 版本的 RTL 或 GVM，覆写软链接。
+    // 无后缀时也显式恢复默认 with-cache 版本，避免上一次 nocache 运行污染本次选择。
+    if (backend_soname == "librtlsim_driver.so") {
+        select_cache_variant("libVentusRTL.so", "libVentusRTL-withcache.so", "libVentusRTL-nocache.so");
+    }
+    if (backend_soname == "libgvm_driver.so") {
+        select_cache_variant("libVentusGVM.so", "libVentusGVM-withcache.so", "libVentusGVM-nocache.so");
+    }
+
     // 构建后端库路径，例如 "install/lib/liba.so"
     std::string lib_path = self_path / backend_soname;
     void *handle = dlopen(lib_path.c_str(), RTLD_LAZY);
     if (!handle) {
         SPDLOG_ERROR("dlopen failed to load backend library: {}", dlerror());
         std::exit(EXIT_FAILURE);
-    }
-
-    // 根据VENTUS_BACKEND指定使用有/无版本的RTL，覆写软链接 libVentusRTL.so
-    if (backend_soname == "librtlsim_driver.so" && backend_split.size() > 1) {
-        std::unordered_set<std::string> nocache = {"nocache", "withoutcache", "without"};
-        std::unordered_set<std::string> withcache = {"cache", "withcache", "with"};
-        auto create_symlink = [&](std::string soname) {
-            namespace fs = std::filesystem;
-            fs::path target = self_path / "libVentusRTL.so";
-            std::error_code err;
-            if (fs::exists(target, err) || fs::is_symlink(target, err)) {
-                fs::remove(target, err);
-            }
-            if (!err) {
-                fs::create_symlink(soname, target, err);
-            }
-            if (err) {
-                SPDLOG_ERROR("Ventus driver: ln -sf failed: {}", fs::filesystem_error("", err).what());
-            }
-        };
-        if (nocache.count(backend_split[1])) {
-            create_symlink("libVentusRTL-nocache.so");
-        } else if (withcache.count(backend_split[1])) {
-            create_symlink("libVentusRTL-withcache.so");
-        }
     }
 
     // 获取所有 API 的函数指针
