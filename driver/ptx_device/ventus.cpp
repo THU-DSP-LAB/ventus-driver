@@ -53,7 +53,6 @@ static constexpr size_t kMaxHeapSizeBytes = (0x1'0000'0000ull - kVentusHeapBase)
 static constexpr size_t kDefaultHeapSizeBytes = kMaxHeapSizeBytes;
 
 static constexpr uint32_t kPerWarpWctxBytes = 1024u;  // must match sbt::ptx emitter
-static constexpr uint32_t kPerWarpStackBytes = 1024u; // must match sbt::ptx emitter
 
 // PTX backend models the Ventus execution shape (not raw CUDA hardware attributes).
 // Keep these values consistent with PoCL's pool sizing expectation and PTX bitmap logic.
@@ -1321,6 +1320,24 @@ extern "C" int vt_copy_from_dev(
     return 0;
 }
 
+static bool read_u32_from_vaddr(PtxDevice *dev, uint32_t vaddr, uint32_t *out) {
+    if (dev == nullptr || out == nullptr) return false;
+    if (!set_current_ctx(dev)) return false;
+
+    CUdeviceptr src{};
+    if (!map_vaddr_to_devptr(dev, vaddr, sizeof(uint32_t), &src)) {
+        SPDLOG_LOGGER_ERROR(logger, "read_u32_from_vaddr: unsupported vaddr={}", hex_u64(vaddr));
+        return false;
+    }
+
+    const CUresult r = cuMemcpyDtoH(out, src, sizeof(uint32_t));
+    if (r != CUDA_SUCCESS) {
+        SPDLOG_LOGGER_ERROR(logger, "read_u32_from_vaddr failed: {}", cu_err(r));
+        return false;
+    }
+    return true;
+}
+
 extern "C" int vt_upload_kernel_bytes(vt_device_h device, const void *content, uint64_t size, int taskID) {
     (void)device;
     (void)content;
@@ -1491,6 +1508,15 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
     uint32_t pds_size_per_thread = static_cast<uint32_t>(metaData->pdsSize);
     uint32_t pds_bitmap_base_vaddr = 0;
     uint32_t pds_pool_num_blocks = 0;
+    uint32_t lds_stack_size_per_wf = 0;
+
+    if (!read_u32_from_vaddr(dev, knl_vaddr + KNL_LDS_STACK_SIZE_PER_WF, &lds_stack_size_per_wf)) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_start: cannot read KNL_LDS_STACK_SIZE_PER_WF from knl_vaddr={}",
+            hex_u64(knl_vaddr)
+        );
+        return -1;
+    }
 
     unsigned grid_x = static_cast<unsigned>(metaData->kernel_size[0]);
     unsigned grid_y = static_cast<unsigned>(metaData->kernel_size[1]);
@@ -1503,6 +1529,21 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
     const uint64_t threads = static_cast<uint64_t>(block_x) * block_y * block_z;
     uint64_t warps = metaData->wg_size;
     if (warps == 0) warps = (threads + 31) >> 5;
+    uint64_t lds_stack_bytes = 0;
+    if (__builtin_mul_overflow(warps, static_cast<uint64_t>(lds_stack_size_per_wf), &lds_stack_bytes)) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_start: overflow while computing LDS stack bytes (warps={}, per_wf={})",
+            warps, static_cast<uint64_t>(lds_stack_size_per_wf)
+        );
+        return -1;
+    }
+    if (metaData->ldsSize < lds_stack_bytes) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_start: ldsSize smaller than warp-stack reservation (ldsSize={} stack_bytes={})",
+            metaData->ldsSize, lds_stack_bytes
+        );
+        return -1;
+    }
 
     if (pds_size_per_thread != 0) {
         uint64_t pds_bytes_per_wf = 0;
@@ -1558,10 +1599,10 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
         }
     }
 
-    const uint64_t wctx_bytes = warps * kPerWarpWctxBytes;
-    const uint64_t stack_bytes = warps * kPerWarpStackBytes;
-    const uint64_t lds_bytes = align_up_u64(metaData->ldsSize, 16);
-    const uint64_t shmem_bytes_u64 = wctx_bytes + stack_bytes + lds_bytes;
+    // const uint64_t wctx_bytes = warps * kPerWarpWctxBytes;
+    // const uint64_t lds_bytes = align_up_u64(metaData->ldsSize, 16);
+    // const uint64_t shmem_bytes_u64 = wctx_bytes + lds_bytes;
+    const uint64_t shmem_bytes_u64 = align_up_u64(metaData->ldsSize, 128);
     if (shmem_bytes_u64 > std::numeric_limits<unsigned>::max()) {
         SPDLOG_LOGGER_ERROR(logger, "dynamic shared too large: {} bytes", shmem_bytes_u64);
         return -1;

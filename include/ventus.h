@@ -40,7 +40,7 @@ typedef struct vt_kernel_metadata_t {  // 这个metadata是供驱动使用的，
     uint64_t metaDataBaseAddr;///> CSR_KNL的值，
     uint64_t ldsSize;///> 每个workgroup使用的local memory的大小
     uint64_t pdsSize;///> 每个thread用到的private memory大小
-    uint64_t sgprUsage;///> 每个workgroup使用的标量寄存器数目
+    uint64_t sgprUsage;///> 每个warp使用的标量寄存器数目
     uint64_t vgprUsage;///> 每个thread使用的向量寄存器数目
     uint64_t pdsBaseAddr;///> private memory的基址，要转成每个workgroup的基地址， wf_size*wg_size*pdsSize
     uint64_t num_thread_global[3];///> 全局三维thread数目
@@ -48,6 +48,24 @@ typedef struct vt_kernel_metadata_t {  // 这个metadata是供驱动使用的，
     uint64_t threadIdxOffset[3];///> global threadIdx偏移量
     const char* kernel_name; ///> kernel名称
 } vt_kernel_metadata_t;
+
+// Kernel metadata buffer offsets (pointed to by CSR_KNL)
+#define KNL_ENTRY 0
+#define KNL_ARG_BASE 4
+#define KNL_WORK_DIM 8
+#define KNL_GL_SIZE_X 12
+#define KNL_GL_SIZE_Y 16
+#define KNL_GL_SIZE_Z 20
+#define KNL_LC_SIZE_X 24
+#define KNL_LC_SIZE_Y 28
+#define KNL_LC_SIZE_Z 32
+#define KNL_GL_OFFSET_X 36
+#define KNL_GL_OFFSET_Y 40
+#define KNL_GL_OFFSET_Z 44
+#define KNL_PRINT_ADDR 48
+#define KNL_PRINT_SIZE 52
+#define KNL_LDS_STACK_SIZE_PER_WF 56
+#define KNL_MAX_METADATA_SIZE 64
 
 // device caps ids
 #define VT_CAPS_VERSION           0x0
