@@ -149,13 +149,36 @@ vt_api_t load_backend() {
         namespace fs = std::filesystem;
         fs::path target = self_path / link_name;
         std::error_code err;
-        if (fs::exists(target, err) || fs::is_symlink(target, err)) {
-            fs::remove(target, err);
+        // Concurrency-safe symlink update (important when multiple processes
+        // dlopen this backend in parallel, e.g., parallel regression workers):
+        //
+        //   1) Idempotent short-circuit: if target already points at `soname`,
+        //      do nothing. This keeps the common case lock-free.
+        //   2) Atomic replace via tmp + rename(2): POSIX guarantees rename is
+        //      atomic, so the target is never momentarily missing. Even if
+        //      several processes race on the "real flip" after a mode switch,
+        //      every other process' dlopen always sees a valid symlink
+        //      pointing at either the old or new target — never nothing.
+        //
+        // A plain remove()+create_symlink() (the previous implementation)
+        // exposes a small "file missing" window between the two calls; another
+        // worker's dlopen landing in that window fails with
+        // "cannot open shared object file". Do NOT revert to that approach.
+        if (fs::is_symlink(target, err)) {
+            auto current = fs::read_symlink(target, err);
+            if (!err && current.string() == soname) return;
         }
+        // Per-pid tmp name so concurrent processes don't collide on the staging symlink.
+        fs::path tmp = target;
+        tmp += ".tmp." + std::to_string(::getpid());
+        fs::remove(tmp, err);                              // clear any leftover from a crashed predecessor
+        fs::create_symlink(soname, tmp, err);
         if (!err) {
-            fs::create_symlink(soname, target, err);
+            fs::rename(tmp, target, err);                  // atomic on POSIX
         }
         if (err) {
+            std::error_code cleanup_err;
+            fs::remove(tmp, cleanup_err);                  // best-effort cleanup; don't overwrite err
             SPDLOG_ERROR("Ventus driver: ln -sf failed: {}", fs::filesystem_error("", err).what());
         }
     };
