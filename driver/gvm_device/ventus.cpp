@@ -9,6 +9,7 @@
 #include <utils.hpp>
 #include "ventus.h"
 #include "loadelf.hpp"
+#include "rtl_buffer_allocator.hpp"
 #include "ventus_rtlsim.h"
 #include <cstdint>
 #include <cstdlib>
@@ -20,12 +21,16 @@
 
 // static std::map<int, uint64_t> ptroots; // pagetable root physical address
 static std::shared_ptr<spdlog::logger> logger;
-static uint64_t alloc_vaddr = 0x90000000;
+
+namespace {
+RtlBufferAllocator g_rtl_buffer_allocator;
+}
 
 /// open the device and connect to it
 extern int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
-    fw_vt_dev_open();
+    g_rtl_buffer_allocator.reset();
+    if (fw_vt_dev_open() != 0) return -1;
 
     auto env_waveform = std::getenv("VENTUS_WAVEFORM");
     auto env_waveform_begin = std::getenv("VENTUS_WAVEFORM_BEGIN");
@@ -109,44 +114,59 @@ extern int vt_buf_alloc(
     uint64_t kernelID
 ) {
     // TODO: RTLSIM does not support Virtual Memory yet
-    if (size <= 0 || hdevice == nullptr) return -1;
+    if (size <= 0 || hdevice == nullptr || vaddr == nullptr) return -1;
 
-    uint64_t* fw_vaddr = new uint64_t;
-    fw_vt_buf_alloc(size, fw_vaddr, BUF_TYPE, taskID, kernelID);
+    const uint64_t dut_vaddr = g_rtl_buffer_allocator.alloc(size);
+    if (dut_vaddr == 0) {
+        SPDLOG_LOGGER_ERROR(logger, "vt_buf_alloc: allocator failed, size=0x{:x}", size);
+        return -1;
+    }
+    if (fw_vt_buf_alloc_fixed(size, dut_vaddr, BUF_TYPE, taskID, kernelID) != 0) {
+        const bool rollback_ok = g_rtl_buffer_allocator.free(dut_vaddr, size);
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "vt_buf_alloc: REF fixed allocation failed, vaddr=0x{:x}, size=0x{:x}, rollback_ok={}",
+            dut_vaddr, size, rollback_ok
+        );
+        return -1;
+    }
 
-    *vaddr = *fw_vaddr;
-    if (*vaddr == 0) return -1;
-    delete fw_vaddr;
+    *vaddr = dut_vaddr;
     return 0;
 }
 
 extern int vt_buf_free(
     vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID
 ) {
-    // if (hdevice == nullptr) return -1;
-    // auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    // ventus_rtlsim_vmem_free(device, ptroots[taskID], *vaddr, size);
-    
-    uint64_t* fw_vaddr = new uint64_t;
-    *fw_vaddr = *vaddr;
-    fw_vt_buf_free(size, fw_vaddr, taskID, kernelID);
-    delete fw_vaddr;
-    
+    if (hdevice == nullptr || vaddr == nullptr) return -1;
+    if (fw_vt_buf_free(size, vaddr, taskID, kernelID) != 0) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_buf_free: REF free-all failed, size=0x{:x}, taskID={}", size, taskID
+        );
+        return -1;
+    }
+    g_rtl_buffer_allocator.reset();
     return 0;
 }
 
 extern int vt_one_buf_free(
     vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID
 ) {
-    // if (hdevice == nullptr) return -1;
-    // auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    // ventus_rtlsim_vmem_free(device, ptroots[taskID], *vaddr, size);
-    
-    uint64_t* fw_vaddr = new uint64_t;
-    *fw_vaddr = *vaddr;
-    fw_vt_one_buf_free(size, fw_vaddr, taskID, kernelID);
-    delete fw_vaddr;
-    
+    if (hdevice == nullptr || vaddr == nullptr) return -1;
+    if (fw_vt_one_buf_free(size, vaddr, taskID, kernelID) != 0) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_one_buf_free: REF exact free failed, vaddr=0x{:x}, size=0x{:x}", *vaddr, size
+        );
+        return -1;
+    }
+    if (!g_rtl_buffer_allocator.free(*vaddr, size)) {
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "vt_one_buf_free: local allocator rollback failed, vaddr=0x{:x}, size=0x{:x}",
+            *vaddr, size
+        );
+        return -1;
+    }
     return 0;
 }
 

@@ -6,8 +6,8 @@
  */
 
 #include "ventus.h"
-#include "buddy.hpp"
 #include "loadelf.hpp"
+#include "rtl_buffer_allocator.hpp"
 #include "utils.hpp"
 #include "ventus_rtlsim.h"
 #include <cstdint>
@@ -20,17 +20,15 @@
 
 // static std::map<int, uint64_t> ptroots; // pagetable root physical address
 static std::shared_ptr<spdlog::logger> logger;
-BuddyAllocator<4096> buddy_allocator((0xFFFFFFFF - 0x90000000 + 1) / 4096, 16);
-constexpr paddr_t BUDDY_BASE = 0x90000000 - 4096;
 
-static constexpr unsigned log2Ceil(unsigned n) {
-    if (n <= 1) return 0;
-    return 32 - __builtin_clz(n - 1);
+namespace {
+RtlBufferAllocator g_rtl_buffer_allocator;
 }
 
 /// open the device and connect to it
 extern int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
+    g_rtl_buffer_allocator.reset();
 
     auto env_waveform = std::getenv("VENTUS_WAVEFORM");
     auto env_waveform_begin = std::getenv("VENTUS_WAVEFORM_BEGIN");
@@ -113,18 +111,15 @@ extern int vt_buf_alloc(
     uint64_t kernelID
 ) {
     // TODO: RTLSIM does not support Virtual Memory yet
-    if (size <= 0 || hdevice == nullptr) return -1;
-    // auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    size_t pgcnt = (size + 4095) / 4096;
-    paddr_t addr_allocated = buddy_allocator.allocate(log2Ceil(pgcnt)) + BUDDY_BASE;
-    if (addr_allocated == BUDDY_BASE) {
+    if (size <= 0 || hdevice == nullptr || vaddr == nullptr) return -1;
+    const paddr_t addr_allocated = g_rtl_buffer_allocator.alloc(size);
+    if (addr_allocated == 0) {
         SPDLOG_LOGGER_ERROR(logger, "vt_buf_alloc: buddy allocator failed, size=0x{:x}", size);
         return -1;
     }
     SPDLOG_LOGGER_DEBUG(
         logger,
-        "vt_buf_alloc: vaddr_recommand=0x{:x}, vaddr_allocated=0x{:x}, size=0x{:x}, taskID={}",
-        *vaddr, addr_allocated, size, taskID
+        "vt_buf_alloc: vaddr_allocated=0x{:x}, size=0x{:x}, taskID={}", addr_allocated, size, taskID
     );
     *vaddr = addr_allocated; // This is paddr actually
     if (*vaddr == 0) return -1;
@@ -135,11 +130,12 @@ extern int vt_buf_free(
     vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID
 ) {
     if (hdevice == nullptr) return -1;
-    // auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    assert(*vaddr % 4096 == 0);
-    size_t pgcnt = (size + 4095) / 4096;
-    // Not really freed in hardware, just in buddy allocator
-    buddy_allocator.free(*vaddr - BUDDY_BASE, log2Ceil(pgcnt));
+    if (vaddr == nullptr || !g_rtl_buffer_allocator.free(*vaddr, size)) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_buf_free: invalid free, vaddr=0x{:x}, size=0x{:x}", vaddr ? *vaddr : 0, size
+        );
+        return -1;
+    }
     SPDLOG_LOGGER_INFO(logger, "vt_buf_free: vaddr=0x{:x}, size=0x{:x}", *vaddr, size);
     return 0;
 }
