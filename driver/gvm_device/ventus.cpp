@@ -24,6 +24,28 @@ static std::shared_ptr<spdlog::logger> logger;
 
 namespace {
 RtlBufferAllocator g_rtl_buffer_allocator;
+
+uint64_t get_rtlsim_param_or_zero(const char* key) {
+    uint32_t value = 0;
+    if (ventus_rtlsim_get_parameter(key, &value) != 0) {
+        SPDLOG_LOGGER_ERROR(logger, "failed to query RTL parameter {}", key);
+        return 0;
+    }
+    if (value == 0) {
+        SPDLOG_LOGGER_ERROR(logger, "RTL parameter {} unexpectedly equals zero", key);
+        return 0;
+    }
+    return value;
+}
+
+uint64_t get_total_resident_pds_slots() {
+    const uint64_t num_sm = get_rtlsim_param_or_zero("num_sm");
+    const uint64_t num_wg_slot_per_sm = get_rtlsim_param_or_zero("num_block");
+    if (num_sm == 0 || num_wg_slot_per_sm == 0) {
+        return 0;
+    }
+    return num_sm * num_wg_slot_per_sm;
+}
 }
 
 /// open the device and connect to it
@@ -233,8 +255,14 @@ extern int vt_copy_from_dev(
 }
 
 extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint64_t taskID) {
-    if (hdevice == nullptr) return -1;
+    if (hdevice == nullptr || mtd_driver == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
+    const uint64_t pds_resident_wg_count = get_total_resident_pds_slots();
+    if (pds_resident_wg_count == 0) {
+        return -1;
+    }
+    vt_kernel_metadata_t mtd_ref = *mtd_driver;
+    mtd_ref.pdsResidentWgCount = pds_resident_wg_count;
     ventus_kernel_metadata_t mtd_sim{
         .name = mtd_driver->kernel_name,
         .data = nullptr,
@@ -268,14 +296,15 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
         logger,
         "kernel metadata: kernel_id={}, kernel_size=[{}, {}, {}], wf_size={}, "
         "wg_size=[{}, {}, {}]={}wf, metaDataBaseAddr=0x{:x}, ldsSize=0x{:x}, pdsSize=0x{:x}, "
-        "sgprUsage={}, vgprUsage={}, pdsBaseAddr=0x{:x}",
+        "sgprUsage={}, vgprUsage={}, pdsBaseAddr=0x{:x}, pdsResidentWgCount={}",
         mtd_driver->kernel_id, mtd_driver->kernel_size[0], mtd_driver->kernel_size[1],
         mtd_driver->kernel_size[2], mtd_driver->wf_size, mtd_driver->num_thread_local[0],
         mtd_driver->num_thread_local[1], mtd_driver->num_thread_local[2], mtd_driver->wg_size,
         mtd_driver->metaDataBaseAddr, mtd_driver->ldsSize, mtd_driver->pdsSize,
-        mtd_driver->sgprUsage, mtd_driver->vgprUsage, mtd_driver->pdsBaseAddr
+        mtd_driver->sgprUsage, mtd_driver->vgprUsage, mtd_driver->pdsBaseAddr,
+        pds_resident_wg_count
     );
-    fw_vt_start(mtd_driver, taskID); // 先初始化 spike，再运行 sim-verilator
+    fw_vt_start(&mtd_ref, taskID); // 先初始化 spike，再运行 sim-verilator
     ventus_rtlsim_add_kernel(device, &mtd_sim, nullptr);
     return 0;
 }

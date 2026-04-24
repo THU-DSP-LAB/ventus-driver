@@ -26,6 +26,28 @@ static std::vector<std::pair<vaddr_t, size_t>> g_elf_alloc;
 static uint64_t g_kernel_launch_id = 0;
 static uint64_t g_software_wg_id_base = 0;
 
+static uint64_t get_cyclesim_param_or_zero(ventus_cyclesim_param_id_t param) {
+    uint64_t value = 0;
+    if (ventus_cyclesim_get_param_u64(param, &value) != 0) {
+        SPDLOG_LOGGER_ERROR(logger, "failed to query cyclesim param {}", static_cast<int>(param));
+        return 0;
+    }
+    if (value == 0) {
+        SPDLOG_LOGGER_ERROR(logger, "cyclesim param {} unexpectedly equals zero", static_cast<int>(param));
+        return 0;
+    }
+    return value;
+}
+
+static uint64_t get_total_resident_pds_slots() {
+    const uint64_t num_sm = get_cyclesim_param_or_zero(VENTUS_CYCLESIM_PARAM_NUM_SM);
+    const uint64_t num_wg_slot_per_sm = get_cyclesim_param_or_zero(VENTUS_CYCLESIM_PARAM_MAX_CTA_PER_SM);
+    if (num_sm == 0 || num_wg_slot_per_sm == 0) {
+        return 0;
+    }
+    return num_sm * num_wg_slot_per_sm;
+}
+
 static bool cyclesim_driver_gvm_enabled() {
     const char* env = std::getenv("ENABLE_CYCLESIM_GVM");
     if (env == nullptr) return false;
@@ -259,6 +281,13 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
         mtd_driver->kernel_size[0] * mtd_driver->kernel_size[1] * mtd_driver->kernel_size[2];
     const uint64_t cyclesim_kernel_id
         = cyclesim_driver_gvm_enabled() ? g_kernel_launch_id++ : kernel_cnt++;
+    const uint64_t pds_resident_wg_count =
+        cyclesim_driver_gvm_enabled() ? get_total_resident_pds_slots() : 0;
+    if (cyclesim_driver_gvm_enabled() && pds_resident_wg_count == 0) {
+        return -1;
+    }
+    vt_kernel_metadata_t mtd_ref = *mtd_driver;
+    mtd_ref.pdsResidentWgCount = pds_resident_wg_count;
     ventus_kernel_metadata_t mtd_sim{
         .name = mtd_driver->kernel_name,
         // .kernel_id = mtd_driver->kernel_id,
@@ -293,10 +322,10 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
     if (cyclesim_driver_gvm_enabled()) {
         ventus_cyclesim_gvm_set_kernel_wg_id_base(cyclesim_kernel_id, g_software_wg_id_base);
         g_software_wg_id_base += kernel_wg_count;
-        fw_vt_start(mtd_driver, taskID);
+        fw_vt_start(&mtd_ref, taskID);
         SPDLOG_LOGGER_DEBUG(
-            logger, "gvm sidecar: cyclesim_kernel_id={}, software_wg_id_base={}",
-            cyclesim_kernel_id, g_software_wg_id_base - kernel_wg_count
+            logger, "gvm sidecar: cyclesim_kernel_id={}, software_wg_id_base={}, pdsResidentWgCount={}",
+            cyclesim_kernel_id, g_software_wg_id_base - kernel_wg_count, pds_resident_wg_count
         );
     }
     ventus_cyclesim_add_kernel(device, &mtd_sim, nullptr);
@@ -304,12 +333,13 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
         logger,
         "kernel metadata: kernel_id={}, kernel_size=[{}, {}, {}], wf_size={}, "
         "wg_size=[{}, {}, {}]={}wf, metaDataBaseAddr=0x{:x}, ldsSize=0x{:x}, pdsSize=0x{:x}, "
-        "sgprUsage={}, vgprUsage={}, pdsBaseAddr=0x{:x}",
+        "sgprUsage={}, vgprUsage={}, pdsBaseAddr=0x{:x}, pdsResidentWgCount={}",
         mtd_driver->kernel_id, mtd_driver->kernel_size[0], mtd_driver->kernel_size[1],
         mtd_driver->kernel_size[2], mtd_driver->wf_size, mtd_driver->num_thread_local[0],
         mtd_driver->num_thread_local[1], mtd_driver->num_thread_local[2], mtd_driver->wg_size,
         mtd_driver->metaDataBaseAddr, mtd_driver->ldsSize, mtd_driver->pdsSize,
-        mtd_driver->sgprUsage, mtd_driver->vgprUsage, mtd_driver->pdsBaseAddr
+        mtd_driver->sgprUsage, mtd_driver->vgprUsage, mtd_driver->pdsBaseAddr,
+        pds_resident_wg_count
     );
     return 0;
 }

@@ -47,6 +47,7 @@ typedef struct vt_kernel_metadata_t {  // 这个metadata是供驱动使用的，
     uint64_t num_thread_local[3];///> 线程块内三维thread数目
     uint64_t threadIdxOffset[3];///> global threadIdx偏移量
     const char* kernel_name; ///> kernel名称
+    uint64_t pdsResidentWgCount; ///> 全设备 resident PDS slot 总数（跨所有 SM 的线性 slot 数）
 } vt_kernel_metadata_t;
 
 // Kernel metadata buffer offsets (pointed to by CSR_KNL)
