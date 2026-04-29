@@ -4,12 +4,12 @@
  *
  * 1. `/include/ventus.h`中声明的函数
  */
- #define ENABLE_GVM
+#define ENABLE_GVM
 
-#include <utils.hpp>
 #include "ventus.h"
 #include "loadelf.hpp"
 #include "rtl_buffer_allocator.hpp"
+#include "rtlsim_backend_loader.hpp"
 #include "ventus_rtlsim.h"
 #include <cstdint>
 #include <cstdlib>
@@ -18,6 +18,7 @@
 #include <spdlog/spdlog.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#include <utils.hpp>
 
 // static std::map<int, uint64_t> ptroots; // pagetable root physical address
 static std::shared_ptr<spdlog::logger> logger;
@@ -25,9 +26,20 @@ static std::shared_ptr<spdlog::logger> logger;
 namespace {
 RtlBufferAllocator g_rtl_buffer_allocator;
 
-uint64_t get_rtlsim_param_or_zero(const char* key) {
+const ventus::rtlsim_backend::Api &gvm() {
+    static constexpr ventus::rtlsim_backend::LibraryNames kLibraries = {
+        "libVentusGVM-withcache.so",
+        "libVentusGVM-nocache.so",
+    };
+    static const ventus::rtlsim_backend::Api api = ventus::rtlsim_backend::load(
+        kLibraries, ventus::rtlsim_backend::FirmwareApiRequirement::required
+    );
+    return api;
+}
+
+uint64_t get_rtlsim_param_or_zero(const char *key) {
     uint32_t value = 0;
-    if (ventus_rtlsim_get_parameter(key, &value) != 0) {
+    if (gvm().get_parameter(key, &value) != 0) {
         SPDLOG_LOGGER_ERROR(logger, "failed to query RTL parameter {}", key);
         return 0;
     }
@@ -46,13 +58,13 @@ uint64_t get_total_resident_pds_slots() {
     }
     return num_sm * num_wg_slot_per_sm;
 }
-}
+} // namespace
 
 /// open the device and connect to it
 extern int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
     g_rtl_buffer_allocator.reset();
-    if (fw_vt_dev_open() != 0) return -1;
+    if (gvm().fw_vt_dev_open() != 0) return -1;
 
     auto env_waveform = std::getenv("VENTUS_WAVEFORM");
     auto env_waveform_begin = std::getenv("VENTUS_WAVEFORM_BEGIN");
@@ -67,10 +79,10 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     }
     waveform_begin = parse_u64(env_waveform_begin).value_or(waveform_begin);
     waveform_end = parse_u64(env_waveform_end).value_or(waveform_end);
-        waveform_enable = waveform_end > waveform_begin;
+    waveform_enable = waveform_end > waveform_begin;
 
     ventus_rtlsim_config_t config;
-    ventus_rtlsim_get_default_config(&config);
+    gvm().get_default_config(&config);
     config.sim_time_max = ~0ull;
     config.pmem.auto_alloc = true;
     config.waveform.enable = waveform_enable;
@@ -81,7 +93,7 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     config.log.console.enable = true;
     config.log.console.level = "trace";
     config.log.file.enable = false;
-    auto device = ventus_rtlsim_init(&config);
+    auto device = gvm().init(&config);
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
     logger->set_level(spdlog::level::trace);
@@ -92,9 +104,9 @@ extern int vt_dev_open(vt_device_h *hdevice) {
 /// Close the device when all the operations are done
 extern int vt_dev_close(vt_device_h hdevice) {
     if (hdevice == nullptr) return -1;
-    fw_vt_dev_close();
+    gvm().fw_vt_dev_close();
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    ventus_rtlsim_finish(device, false);
+    gvm().finish(device, false);
     logger->debug("vt_dev_close : goodbye from ventus.cpp (gvm device)");
     return 0;
 }
@@ -103,7 +115,7 @@ int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *value) {
 #define GET_PARAM(key)                                                                             \
     do {                                                                                           \
         uint32_t val;                                                                              \
-        if (ventus_rtlsim_get_parameter(key, &val) == 0) {                                         \
+        if (gvm().get_parameter(key, &val) == 0) {                                                 \
             *value = val;                                                                          \
             return 0;                                                                              \
         } else {                                                                                   \
@@ -143,7 +155,7 @@ extern int vt_buf_alloc(
         SPDLOG_LOGGER_ERROR(logger, "vt_buf_alloc: allocator failed, size=0x{:x}", size);
         return -1;
     }
-    if (fw_vt_buf_alloc_fixed(size, dut_vaddr, BUF_TYPE, taskID, kernelID) != 0) {
+    if (gvm().fw_vt_buf_alloc_fixed(size, dut_vaddr, BUF_TYPE, taskID, kernelID) != 0) {
         const bool rollback_ok = g_rtl_buffer_allocator.free(dut_vaddr, size);
         SPDLOG_LOGGER_ERROR(
             logger,
@@ -161,7 +173,7 @@ extern int vt_buf_free(
     vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID
 ) {
     if (hdevice == nullptr || vaddr == nullptr) return -1;
-    if (fw_vt_buf_free(size, vaddr, taskID, kernelID) != 0) {
+    if (gvm().fw_vt_buf_free(size, vaddr, taskID, kernelID) != 0) {
         SPDLOG_LOGGER_ERROR(
             logger, "vt_buf_free: REF free-all failed, size=0x{:x}, taskID={}", size, taskID
         );
@@ -175,16 +187,16 @@ extern int vt_one_buf_free(
     vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID
 ) {
     if (hdevice == nullptr || vaddr == nullptr) return -1;
-    if (fw_vt_one_buf_free(size, vaddr, taskID, kernelID) != 0) {
+    if (gvm().fw_vt_one_buf_free(size, vaddr, taskID, kernelID) != 0) {
         SPDLOG_LOGGER_ERROR(
-            logger, "vt_one_buf_free: REF exact free failed, vaddr=0x{:x}, size=0x{:x}", *vaddr, size
+            logger, "vt_one_buf_free: REF exact free failed, vaddr=0x{:x}, size=0x{:x}", *vaddr,
+            size
         );
         return -1;
     }
     if (!g_rtl_buffer_allocator.free(*vaddr, size)) {
         SPDLOG_LOGGER_ERROR(
-            logger,
-            "vt_one_buf_free: local allocator rollback failed, vaddr=0x{:x}, size=0x{:x}",
+            logger, "vt_one_buf_free: local allocator rollback failed, vaddr=0x{:x}, size=0x{:x}",
             *vaddr, size
         );
         return -1;
@@ -230,13 +242,13 @@ extern int vt_copy_to_dev(
     uint64_t kernelID
 ) {
     if (hdevice == nullptr) return -1;
-    fw_vt_copy_to_dev(dev_vaddr, src_addr, size, taskID, kernelID);
+    gvm().fw_vt_copy_to_dev(dev_vaddr, src_addr, size, taskID, kernelID);
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     logger->debug(
         "vt_copy_to_dev: dev_addr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size, taskID,
         kernelID
     );
-    ventus_rtlsim_pmemcpy_h2d(device, dev_vaddr, src_addr, size);
+    gvm().pmemcpy_h2d(device, dev_vaddr, src_addr, size);
     return 0;
 }
 
@@ -246,11 +258,11 @@ extern int vt_copy_from_dev(
 ) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    SPDLOG_LOGGER_DEBUG(logger,
-        "vt_copy_from_dev: dev_addr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size, taskID,
-        kernelID
+    SPDLOG_LOGGER_DEBUG(
+        logger, "vt_copy_from_dev: dev_addr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size,
+        taskID, kernelID
     );
-    ventus_rtlsim_pmemcpy_d2h(device, dst_addr, dev_vaddr, size);
+    gvm().pmemcpy_d2h(device, dst_addr, dev_vaddr, size);
     return 0;
 }
 
@@ -301,11 +313,10 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
         mtd_driver->kernel_size[2], mtd_driver->wf_size, mtd_driver->num_thread_local[0],
         mtd_driver->num_thread_local[1], mtd_driver->num_thread_local[2], mtd_driver->wg_size,
         mtd_driver->metaDataBaseAddr, mtd_driver->ldsSize, mtd_driver->pdsSize,
-        mtd_driver->sgprUsage, mtd_driver->vgprUsage, mtd_driver->pdsBaseAddr,
-        pds_resident_wg_count
+        mtd_driver->sgprUsage, mtd_driver->vgprUsage, mtd_driver->pdsBaseAddr, pds_resident_wg_count
     );
-    fw_vt_start(&mtd_ref, taskID); // 先初始化 spike，再运行 sim-verilator
-    ventus_rtlsim_add_kernel(device, &mtd_sim, nullptr);
+    gvm().fw_vt_start(&mtd_ref, taskID); // 先初始化 spike，再运行 sim-verilator
+    gvm().add_kernel(device, &mtd_sim, nullptr);
     return 0;
 }
 
@@ -313,12 +324,12 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     uint64_t timeout_ns = timeout * 1000000;
-    while (!ventus_rtlsim_is_idle(device) && ventus_rtlsim_get_time(device) < timeout_ns) {
-        ventus_rtlsim_step(device);
+    while (!gvm().is_idle(device) && gvm().get_time(device) < timeout_ns) {
+        gvm().step(device);
     }
     for (int i = 0; i < 5000; i++) {
         // TODO: RTL does not provide a way to check if L2 cache flush is done
-        ventus_rtlsim_step(device);
+        gvm().step(device);
     }
     // TODO: temp
     // it seems that vt_dev_close() is not called by POCL
@@ -334,7 +345,7 @@ extern int vt_finish_all_kernel(vt_device_h hdevice, std::queue<int> *finished_k
 
 extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int taskID) {
     if (hdevice == nullptr) return -1;
-    fw_vt_upload_kernel_file(filename, taskID);
+    gvm().fw_vt_upload_kernel_file(filename, taskID);
     auto device = (ventus_rtlsim_t *)hdevice;
     // uint64_t ptroot = ptroots[taskID];
 
@@ -349,11 +360,11 @@ extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int 
         uint64_t vaddr = block->vaddr;
         uint64_t size = block->memsz;
         logger->debug("vt_upload_kernel_file: addr={:x}, size={}", vaddr, size);
-        ventus_rtlsim_pmemcpy_h2d(device, vaddr, block->data.data(), block->data.size());
+        gvm().pmemcpy_h2d(device, vaddr, block->data.data(), block->data.size());
         std::vector<uint8_t> zeros(size - block->data.size(), 0);
-        ventus_rtlsim_pmemcpy_h2d(device, vaddr + block->data.size(), zeros.data(), zeros.size());
+        gvm().pmemcpy_h2d(device, vaddr + block->data.size(), zeros.data(), zeros.size());
     }
-    ventus_rtlsim_icache_invalidate(device);
+    gvm().icache_invalidate(device);
     return 0;
 }
 int vt_upload_kernel_bytes(vt_device_h device, const void *content, uint64_t size, int taskID) {

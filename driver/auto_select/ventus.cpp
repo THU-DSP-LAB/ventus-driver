@@ -17,9 +17,7 @@
 #include <optional>
 #include <spdlog/spdlog.h>
 #include <string>
-#include <system_error>
 #include <unordered_set>
-#include <unistd.h>
 #include <vector>
 
 //
@@ -127,11 +125,7 @@ static std::optional<cache_variant_t> parse_cache_variant(
 
     const std::string suffix = join_backend_suffix(backend_split);
     const std::unordered_set<std::string> nocache = {
-        "nocache",
-        "no-cache",
-        "withoutcache",
-        "without-cache",
-        "without",
+        "nocache", "no-cache", "withoutcache", "without-cache", "without",
     };
     const std::unordered_set<std::string> withcache = {
         "cache",
@@ -189,67 +183,18 @@ vt_api_t load_backend() {
     std::filesystem::path self_path(info.dli_fname);
     self_path = self_path.parent_path(); // 获取当前库所在目录
 
-    auto create_symlink = [&](const std::string& link_name, const std::string& soname) {
-        namespace fs = std::filesystem;
-        fs::path target = self_path / link_name;
-        std::error_code err;
-        // Concurrency-safe symlink update (important when multiple processes
-        // dlopen this backend in parallel, e.g., parallel regression workers):
-        //
-        //   1) Idempotent short-circuit: if target already points at `soname`,
-        //      do nothing. This keeps the common case lock-free.
-        //   2) Atomic replace via tmp + rename(2): POSIX guarantees rename is
-        //      atomic, so the target is never momentarily missing. Even if
-        //      several processes race on the "real flip" after a mode switch,
-        //      every other process' dlopen always sees a valid symlink
-        //      pointing at either the old or new target — never nothing.
-        //
-        // A plain remove()+create_symlink() (the previous implementation)
-        // exposes a small "file missing" window between the two calls; another
-        // worker's dlopen landing in that window fails with
-        // "cannot open shared object file". Do NOT revert to that approach.
-        if (fs::is_symlink(target, err)) {
-            auto current = fs::read_symlink(target, err);
-            if (!err && current.string() == soname) return;
-        }
-        // Per-pid tmp name so concurrent processes don't collide on the staging symlink.
-        fs::path tmp = target;
-        tmp += ".tmp." + std::to_string(::getpid());
-        fs::remove(tmp, err);                              // clear any leftover from a crashed predecessor
-        fs::create_symlink(soname, tmp, err);
-        if (!err) {
-            fs::rename(tmp, target, err);                  // atomic on POSIX
-        }
-        if (err) {
-            std::error_code cleanup_err;
-            fs::remove(tmp, cleanup_err);                  // best-effort cleanup; don't overwrite err
-            SPDLOG_ERROR("Ventus driver: ln -sf failed: {}", fs::filesystem_error("", err).what());
-        }
-    };
-
-    auto select_cache_variant = [&](const std::string& link_name, const std::string& default_soname,
-                                    const std::string& nocache_soname) {
+    auto validate_cache_variant = [&]() {
         const std::optional<cache_variant_t> cache_variant = parse_cache_variant(backend_split);
         if (!cache_variant) {
             SPDLOG_ERROR("Unsupported VENTUS_BACKEND cache variant: {}", backend);
             std::exit(EXIT_FAILURE);
         }
-
-        if (*cache_variant == cache_variant_t::default_cache ||
-            *cache_variant == cache_variant_t::with_cache) {
-            create_symlink(link_name, default_soname);
-        } else if (*cache_variant == cache_variant_t::no_cache) {
-            create_symlink(link_name, nocache_soname);
-        }
     };
 
-    // 根据 VENTUS_BACKEND 指定使用有/无 cache 版本的 RTL 或 GVM，覆写软链接。
-    // 无后缀时也显式恢复默认 with-cache 版本，避免上一次 nocache 运行污染本次选择。
-    if (backend_soname == "librtlsim_driver.so") {
-        select_cache_variant("libVentusRTL.so", "libVentusRTL-withcache.so", "libVentusRTL-nocache.so");
-    }
-    if (backend_soname == "libgvm_driver.so") {
-        select_cache_variant("libVentusGVM.so", "libVentusGVM-withcache.so", "libVentusGVM-nocache.so");
+    // RTL/GVM cache variants are selected inside their drivers by dlopen().
+    // auto_select only validates the suffix and never mutates shared symlinks.
+    if (backend_soname == "librtlsim_driver.so" || backend_soname == "libgvm_driver.so") {
+        validate_cache_variant();
     }
 
     // 构建后端库路径，例如 "install/lib/liba.so"

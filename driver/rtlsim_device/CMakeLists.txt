@@ -8,12 +8,11 @@ include_directories(${VENTUS_INSTALL_PREFIX}/include)
 file(GLOB_RECURSE SRCS ./ventus.cpp)
 
 add_library(${PROJECT} SHARED ${SRCS})
-target_link_directories(${PROJECT} PRIVATE ${VENTUS_INSTALL_PREFIX}/lib)
-target_link_libraries(${PROJECT} PRIVATE VentusRTL)
 target_link_libraries(${PROJECT} PRIVATE driver_common_utils)
 target_link_libraries(${PROJECT} PRIVATE spdlog)
 target_link_libraries(${PROJECT} PRIVATE fmt)
 target_link_libraries(${PROJECT} PRIVATE SV)
+target_link_libraries(${PROJECT} PRIVATE dl)
 target_compile_definitions(${PROJECT} PRIVATE -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
 
 set_target_properties(${PROJECT} PROPERTIES OUTPUT_NAME "${PROJECT}")
