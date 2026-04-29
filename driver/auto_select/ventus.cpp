@@ -19,6 +19,8 @@
 #include <string>
 #include <system_error>
 #include <unordered_set>
+#include <unistd.h>
+#include <vector>
 
 //
 // 用于导出memcpy_device_to_host的所有数据及其地址（环境变量VENTUS_DUMP_RESULT=filename.json）
@@ -99,6 +101,48 @@ static std::vector<std::string> strsplit(const std::string &s, char delim) {
         start = pos + 1;
     }
     return result;
+}
+
+enum class cache_variant_t {
+    default_cache,
+    with_cache,
+    no_cache,
+};
+
+static std::string join_backend_suffix(const std::vector<std::string> &backend_split) {
+    if (backend_split.size() <= 1) return "";
+
+    std::string suffix = backend_split[1];
+    for (std::size_t i = 2; i < backend_split.size(); ++i) {
+        suffix += "-";
+        suffix += backend_split[i];
+    }
+    return suffix;
+}
+
+static std::optional<cache_variant_t> parse_cache_variant(
+    const std::vector<std::string> &backend_split
+) {
+    if (backend_split.size() <= 1) return cache_variant_t::default_cache;
+
+    const std::string suffix = join_backend_suffix(backend_split);
+    const std::unordered_set<std::string> nocache = {
+        "nocache",
+        "no-cache",
+        "withoutcache",
+        "without-cache",
+        "without",
+    };
+    const std::unordered_set<std::string> withcache = {
+        "cache",
+        "withcache",
+        "with-cache",
+        "with",
+    };
+
+    if (withcache.count(suffix)) return cache_variant_t::with_cache;
+    if (nocache.count(suffix)) return cache_variant_t::no_cache;
+    return std::nullopt;
 }
 
 // 加载后端库并设置函数指针
@@ -183,14 +227,18 @@ vt_api_t load_backend() {
         }
     };
 
-    std::unordered_set<std::string> nocache = {"nocache", "withoutcache", "without"};
-    std::unordered_set<std::string> withcache = {"cache", "withcache", "with"};
-
     auto select_cache_variant = [&](const std::string& link_name, const std::string& default_soname,
                                     const std::string& nocache_soname) {
-        if (backend_split.size() <= 1 || withcache.count(backend_split[1])) {
+        const std::optional<cache_variant_t> cache_variant = parse_cache_variant(backend_split);
+        if (!cache_variant) {
+            SPDLOG_ERROR("Unsupported VENTUS_BACKEND cache variant: {}", backend);
+            std::exit(EXIT_FAILURE);
+        }
+
+        if (*cache_variant == cache_variant_t::default_cache ||
+            *cache_variant == cache_variant_t::with_cache) {
             create_symlink(link_name, default_soname);
-        } else if (nocache.count(backend_split[1])) {
+        } else if (*cache_variant == cache_variant_t::no_cache) {
             create_symlink(link_name, nocache_soname);
         }
     };
