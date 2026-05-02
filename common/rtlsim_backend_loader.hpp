@@ -32,6 +32,7 @@ struct Api {
     ventus_rtlsim_t *(*init)(const ventus_rtlsim_config_t *) = nullptr;
     void (*finish)(ventus_rtlsim_t *, bool) = nullptr;
     const ventus_rtlsim_step_result_t *(*step)(ventus_rtlsim_t *) = nullptr;
+    ventus_rtlsim_pmu_t (*get_pmu)(const ventus_rtlsim_t *) = nullptr;
     void (*icache_invalidate)(ventus_rtlsim_t *) = nullptr;
     void (*add_kernel)(
         ventus_rtlsim_t *, const ventus_kernel_metadata_t *, void (*finish_callback)(void *)
@@ -150,6 +151,8 @@ inline Api open_library(std::string_view soname, FirmwareApiRequirement firmware
     api.step = load_symbol<const ventus_rtlsim_step_result_t *(*)(ventus_rtlsim_t *)>(
         handle, "ventus_rtlsim_step"
     );
+    api.get_pmu =
+        load_symbol<ventus_rtlsim_pmu_t (*)(const ventus_rtlsim_t *)>(handle, "ventus_rtlsim_get_pmu");
     api.icache_invalidate =
         load_symbol<void (*)(ventus_rtlsim_t *)>(handle, "ventus_rtlsim_icache_invalidate");
     api.add_kernel = load_symbol<

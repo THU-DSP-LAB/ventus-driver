@@ -10,6 +10,7 @@
 #include "loadelf.hpp"
 #include "rtl_buffer_allocator.hpp"
 #include "rtlsim_backend_loader.hpp"
+#include "rtlsim_watchdog.hpp"
 #include "ventus_rtlsim.h"
 #include <cstdint>
 #include <cstdlib>
@@ -90,6 +91,7 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     config.waveform.time_end = waveform_end;
     config.waveform.filename = env_waveform_filename ? env_waveform_filename : "waveform.gvm.fst";
     config.snapshot.enable = false;
+    config.hang_timeout = ventus::rtlsim_watchdog::hang_timeout_from_env();
     config.log.console.enable = true;
     config.log.console.level = "trace";
     config.log.file.enable = false;
@@ -325,11 +327,17 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     uint64_t timeout_ns = timeout * 1000000;
     while (!gvm().is_idle(device) && gvm().get_time(device) < timeout_ns) {
-        gvm().step(device);
+        const ventus_rtlsim_step_result_t *result = gvm().step(device);
+        if (ventus::rtlsim_watchdog::check_step_result(gvm(), device, result, "kernel execution", logger) != 0) return -1;
     }
-    for (int i = 0; i < 5000; i++) {
+    if (!gvm().is_idle(device)) {
+        SPDLOG_LOGGER_ERROR(logger, "gvm wait timeout, time={}, timeout={}", gvm().get_time(device), timeout_ns);
+        return -1;
+    }
+    for (int i = 0; i < ventus::rtlsim_watchdog::FLUSH_TAIL_STEPS; i++) {
         // TODO: RTL does not provide a way to check if L2 cache flush is done
-        gvm().step(device);
+        const ventus_rtlsim_step_result_t *result = gvm().step(device);
+        if (ventus::rtlsim_watchdog::check_step_result(gvm(), device, result, "cache flush tail", logger) != 0) return -1;
     }
     // TODO: temp
     // it seems that vt_dev_close() is not called by POCL
