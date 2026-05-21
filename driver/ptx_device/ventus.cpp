@@ -1509,10 +1509,18 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
     uint32_t pds_bitmap_base_vaddr = 0;
     uint32_t pds_pool_num_blocks = 0;
     uint32_t lds_stack_size_per_wf = 0;
+    uint32_t lds_non_stack_size = 0;
 
     if (!read_u32_from_vaddr(dev, knl_vaddr + KNL_LDS_STACK_SIZE_PER_WF, &lds_stack_size_per_wf)) {
         SPDLOG_LOGGER_ERROR(
             logger, "vt_start: cannot read KNL_LDS_STACK_SIZE_PER_WF from knl_vaddr={}",
+            hex_u64(knl_vaddr)
+        );
+        return -1;
+    }
+    if (!read_u32_from_vaddr(dev, knl_vaddr + KNL_LDS_NON_STACK_SIZE, &lds_non_stack_size)) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_start: cannot read KNL_LDS_NON_STACK_SIZE from knl_vaddr={}",
             hex_u64(knl_vaddr)
         );
         return -1;
@@ -1537,10 +1545,18 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
         );
         return -1;
     }
-    if (metaData->ldsSize < lds_stack_bytes) {
+    uint64_t lds_reserved_bytes = 0;
+    if (__builtin_add_overflow(static_cast<uint64_t>(lds_non_stack_size), lds_stack_bytes, &lds_reserved_bytes)) {
         SPDLOG_LOGGER_ERROR(
-            logger, "vt_start: ldsSize smaller than warp-stack reservation (ldsSize={} stack_bytes={})",
-            metaData->ldsSize, lds_stack_bytes
+            logger, "vt_start: overflow while computing LDS reserved bytes (non_stack={} stack_bytes={})",
+            static_cast<uint64_t>(lds_non_stack_size), lds_stack_bytes
+        );
+        return -1;
+    }
+    if (metaData->ldsSize < lds_reserved_bytes) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_start: ldsSize smaller than LDS reservation (ldsSize={} non_stack={} stack_bytes={})",
+            metaData->ldsSize, static_cast<uint64_t>(lds_non_stack_size), lds_stack_bytes
         );
         return -1;
     }
