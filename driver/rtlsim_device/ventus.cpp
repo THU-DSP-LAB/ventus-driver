@@ -204,6 +204,9 @@ extern int vt_copy_to_dev(
         size, taskID, kernelID
     );
     rtl().pmemcpy_h2d(device, dev_vaddr, src_addr, size);
+    if (rtl().dcache_host_invalidate != nullptr) {
+        rtl().dcache_host_invalidate(device);
+    }
     return 0;
 }
 

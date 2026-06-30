@@ -37,6 +37,7 @@
 #include <string>
 #include <string_view>
 #include <sys/wait.h>
+#include <unistd.h>
 #include <unordered_map>
 #include <vector>
 
@@ -209,7 +210,20 @@ static std::string resolve_sbt_ptx_path() {
 
 static fs::path resolve_ptx_cache_dir() {
     if (const auto v = getenv_str("GPU_SBT_PTX_CACHE_DIR")) return fs::path(*v);
-    return fs::path("/tmp/ventus_sbt_ptx");
+    fs::path tmp_root;
+    try {
+        tmp_root = fs::temp_directory_path();
+    } catch (...) {
+        tmp_root = fs::path("/tmp");
+    }
+
+    std::string user_tag;
+    if (const auto v = getenv_str("USER")) {
+        user_tag = sanitize_filename_component(*v);
+    } else {
+        user_tag = "uid" + std::to_string(static_cast<unsigned>(geteuid()));
+    }
+    return tmp_root / ("ventus_sbt_ptx_" + user_tag);
 }
 
 static bool read_file_to_string(const fs::path &p, std::string *out) {

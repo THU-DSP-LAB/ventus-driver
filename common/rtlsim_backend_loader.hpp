@@ -34,6 +34,7 @@ struct Api {
     const ventus_rtlsim_step_result_t *(*step)(ventus_rtlsim_t *) = nullptr;
     ventus_rtlsim_pmu_t (*get_pmu)(const ventus_rtlsim_t *) = nullptr;
     void (*icache_invalidate)(ventus_rtlsim_t *) = nullptr;
+    void (*dcache_host_invalidate)(ventus_rtlsim_t *) = nullptr;
     void (*add_kernel)(
         ventus_rtlsim_t *, const ventus_kernel_metadata_t *, void (*finish_callback)(void *)
     ) = nullptr;
@@ -109,6 +110,16 @@ template <typename Fn> inline Fn load_symbol(void *handle, const char *name) {
     return reinterpret_cast<Fn>(symbol);
 }
 
+template <typename Fn> inline Fn load_optional_symbol(void *handle, const char *name) {
+    dlerror();
+    void *symbol = dlsym(handle, name);
+    const char *err = dlerror();
+    if (err != nullptr || symbol == nullptr) {
+        return nullptr;
+    }
+    return reinterpret_cast<Fn>(symbol);
+}
+
 inline void load_firmware_symbols(Api &api, void *handle) {
     api.fw_vt_dev_open = load_symbol<int (*)()>(handle, "fw_vt_dev_open");
     api.fw_vt_dev_close = load_symbol<int (*)()>(handle, "fw_vt_dev_close");
@@ -155,6 +166,9 @@ inline Api open_library(std::string_view soname, FirmwareApiRequirement firmware
         load_symbol<ventus_rtlsim_pmu_t (*)(const ventus_rtlsim_t *)>(handle, "ventus_rtlsim_get_pmu");
     api.icache_invalidate =
         load_symbol<void (*)(ventus_rtlsim_t *)>(handle, "ventus_rtlsim_icache_invalidate");
+    api.dcache_host_invalidate = load_optional_symbol<void (*)(ventus_rtlsim_t *)>(
+        handle, "ventus_rtlsim_dcache_host_invalidate"
+    );
     api.add_kernel = load_symbol<
         void (*)(ventus_rtlsim_t *, const ventus_kernel_metadata_t *, void (*)(void *))>(
         handle, "ventus_rtlsim_add_kernel"

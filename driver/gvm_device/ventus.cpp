@@ -251,6 +251,9 @@ extern int vt_copy_to_dev(
         kernelID
     );
     gvm().pmemcpy_h2d(device, dev_vaddr, src_addr, size);
+    if (gvm().dcache_host_invalidate != nullptr) {
+        gvm().dcache_host_invalidate(device);
+    }
     return 0;
 }
 
