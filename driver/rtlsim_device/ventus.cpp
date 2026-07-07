@@ -14,10 +14,12 @@
 #include "ventus_rtlsim.h"
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <stdlib.h>
+#include <string>
 #include <sys/types.h>
 
 // static std::map<int, uint64_t> ptroots; // pagetable root physical address
@@ -25,6 +27,34 @@ static std::shared_ptr<spdlog::logger> logger;
 
 namespace {
 RtlBufferAllocator g_rtl_buffer_allocator;
+
+spdlog::level::level_enum parse_log_level(const char *level) {
+    if (level == nullptr || level[0] == '\0') return spdlog::level::warn;
+    const auto parsed = spdlog::level::from_str(level);
+    if (parsed == spdlog::level::off && std::string(level) != "off") return spdlog::level::warn;
+    return parsed;
+}
+
+const char *log_level_name(spdlog::level::level_enum level) {
+    switch (level) {
+    case spdlog::level::trace:
+        return "trace";
+    case spdlog::level::debug:
+        return "debug";
+    case spdlog::level::info:
+        return "info";
+    case spdlog::level::warn:
+        return "warn";
+    case spdlog::level::err:
+        return "err";
+    case spdlog::level::critical:
+        return "critical";
+    case spdlog::level::off:
+        return "off";
+    default:
+        return "warn";
+    }
+}
 
 const ventus::rtlsim_backend::Api &rtl() {
     static constexpr ventus::rtlsim_backend::LibraryNames kLibraries = {
@@ -36,6 +66,7 @@ const ventus::rtlsim_backend::Api &rtl() {
     );
     return api;
 }
+
 } // namespace
 
 /// open the device and connect to it
@@ -67,13 +98,14 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     config.waveform.filename = "waveform.rtl.fst";
     config.snapshot.enable = false;
     config.hang_timeout = ventus::rtlsim_watchdog::hang_timeout_from_env();
+    const auto log_level = parse_log_level(std::getenv("VENTUS_RTLSIM_LOG_LEVEL"));
     config.log.console.enable = true;
-    config.log.console.level = "trace";
+    config.log.console.level = log_level_name(log_level);
     config.log.file.enable = false;
     auto device = rtl().init(&config);
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
-    logger->set_level(spdlog::level::trace);
+    logger->set_level(log_level);
     logger->set_pattern("[%l] %v [%s:%#]");
     SPDLOG_LOGGER_DEBUG(logger, "vt_dev_open : hello world from ventus.cpp (rtlsim device)");
     return 0;
@@ -203,10 +235,10 @@ extern int vt_copy_to_dev(
         logger, "vt_copy_to_dev: dev_addr=0x{:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
         size, taskID, kernelID
     );
-    rtl().pmemcpy_h2d(device, dev_vaddr, src_addr, size);
     if (rtl().dcache_host_invalidate != nullptr) {
         rtl().dcache_host_invalidate(device);
     }
+    rtl().pmemcpy_h2d(device, dev_vaddr, src_addr, size);
     return 0;
 }
 

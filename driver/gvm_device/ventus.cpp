@@ -244,16 +244,16 @@ extern int vt_copy_to_dev(
     uint64_t kernelID
 ) {
     if (hdevice == nullptr) return -1;
-    gvm().fw_vt_copy_to_dev(dev_vaddr, src_addr, size, taskID, kernelID);
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     logger->debug(
         "vt_copy_to_dev: dev_addr={:x}, size={}, taskID={}, kernelID={}", dev_vaddr, size, taskID,
         kernelID
     );
-    gvm().pmemcpy_h2d(device, dev_vaddr, src_addr, size);
     if (gvm().dcache_host_invalidate != nullptr) {
         gvm().dcache_host_invalidate(device);
     }
+    gvm().fw_vt_copy_to_dev(dev_vaddr, src_addr, size, taskID, kernelID);
+    gvm().pmemcpy_h2d(device, dev_vaddr, src_addr, size);
     return 0;
 }
 
