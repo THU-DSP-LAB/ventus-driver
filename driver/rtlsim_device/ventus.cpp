@@ -8,6 +8,8 @@
 #include "ventus.h"
 #include "loadelf.hpp"
 #include "rtl_buffer_allocator.hpp"
+#include "rtl_persistent_state.hpp"
+#include "rtl_state_contract.hpp"
 #include "rtlsim_backend_loader.hpp"
 #include "rtlsim_watchdog.hpp"
 #include "utils.hpp"
@@ -25,13 +27,18 @@
 #include <spdlog/spdlog.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#include <vector>
 
 // static std::map<int, uint64_t> ptroots; // pagetable root physical address
 static std::shared_ptr<spdlog::logger> logger;
 
 namespace {
 RtlBufferAllocator g_rtl_buffer_allocator;
+ventus::rtl_state::AllocationContract g_allocation_contract;
+ventus::rtl_state::PersistentState g_persistent_state;
+std::vector<ventus::rtl_state::ImmutableRegion> g_immutable_regions;
 bool g_force_snapshot_rollback = false;
+bool g_kernel_inflight = false;
 std::string g_snapshot_filename = "logs/ventus_rtlsim.snapshot.fst";
 
 spdlog::level::level_enum parse_log_level(const char *level) {
@@ -114,12 +121,93 @@ bool prepare_snapshot_directory(const std::string &filename) {
     }
     return true;
 }
+
+bool persistent_state_supported() {
+    return rtl().save_state != nullptr
+        && rtl().restore_state != nullptr
+        && rtl().persistent_state_version != nullptr
+        && rtl().persistent_state_version() == 1;
+}
+
+bool compare_device_bytes(
+    ventus_rtlsim_t *device, uint64_t address, const void *expected,
+    uint64_t size
+) {
+    static constexpr uint64_t kChunkBytes = 1ull << 20;
+    const auto *expected_bytes = static_cast<const uint8_t *>(expected);
+    std::vector<uint8_t> observed(
+        static_cast<size_t>(std::min(size, kChunkBytes))
+    );
+    uint64_t offset = 0;
+    while (offset < size) {
+        const uint64_t chunk = std::min(size - offset, kChunkBytes);
+        if (!rtl().pmemcpy_d2h(
+                device, observed.data(), address + offset, chunk
+            )
+            || std::memcmp(
+                   observed.data(), expected_bytes + offset,
+                   static_cast<size_t>(chunk)
+               )
+                != 0) {
+            return false;
+        }
+        offset += chunk;
+    }
+    return true;
+}
+
+int publish_pending_state(ventus_rtlsim_t *device) {
+    if (!g_persistent_state.pending_save()) return 0;
+    std::string error;
+    const bool success = g_persistent_state.publish_pending(
+        rtl().get_time(device),
+        g_allocation_contract.active_allocations(),
+        g_immutable_regions,
+        [device](const std::filesystem::path &directory) {
+            return rtl().save_state(device, directory.c_str());
+        },
+        error
+    );
+    if (!success) {
+        SPDLOG_LOGGER_ERROR(logger, "persistent RTL state save failed: {}", error);
+        return -1;
+    }
+    SPDLOG_LOGGER_INFO(
+        logger, "persistent RTL state saved at dispatch {}",
+        g_persistent_state.completed_dispatches()
+    );
+    return 0;
+}
+
+int finish_restore_rebind() {
+    if (!g_allocation_contract.compare_only()) return 0;
+    std::string error;
+    if (!g_allocation_contract.finish_rebind_with_dormant(error)) {
+        SPDLOG_LOGGER_ERROR(logger, "persistent RTL rebind failed: {}", error);
+        return -1;
+    }
+    SPDLOG_LOGGER_INFO(
+        logger,
+        "persistent RTL rebind completed with {} bound and {} dormant allocations",
+        g_allocation_contract.expected_cursor(),
+        g_allocation_contract.dormant_count()
+    );
+    return 0;
+}
 } // namespace
 
 /// open the device and connect to it
 extern int vt_dev_open(vt_device_h *hdevice) {
     if (hdevice == nullptr) return -1;
     g_rtl_buffer_allocator.reset();
+    g_allocation_contract.reset();
+    g_immutable_regions.clear();
+    g_kernel_inflight = false;
+    std::string persistent_error;
+    if (!g_persistent_state.configure_from_env(persistent_error)) {
+        fmt::print(stderr, "invalid persistent RTL state configuration: {}\n", persistent_error);
+        return -1;
+    }
 
     auto env_waveform = std::getenv("VENTUS_WAVEFORM");
     auto env_waveform_begin = std::getenv("VENTUS_WAVEFORM_BEGIN");
@@ -192,10 +280,64 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     config.log.console.enable = true;
     config.log.console.level = log_level_name(log_level);
     config.log.file.enable = false;
-    auto device = rtl().init(&config);
-    if (device == nullptr) {
-        fmt::print(stderr, "ventus_rtlsim_init rejected the runtime configuration\n");
+    if ((g_persistent_state.capture_enabled() || g_persistent_state.restoring())
+        && !persistent_state_supported()) {
+        fmt::print(
+            stderr,
+            "persistent RTL state requires a SAVABLE=1 library with ABI version 1\n"
+        );
         return -1;
+    }
+    if ((g_persistent_state.capture_enabled() || g_persistent_state.restoring())
+        && (config.waveform.enable || config.snapshot.enable)) {
+        fmt::print(
+            stderr,
+            "persistent RTL state cannot be combined with waveform or fork snapshot\n"
+        );
+        return -1;
+    }
+    auto device = g_persistent_state.restoring()
+        ? rtl().restore_state(
+              &config,
+              g_persistent_state.resume_simulator_directory().c_str()
+          )
+        : rtl().init(&config);
+    if (device == nullptr) {
+        fmt::print(stderr, "Ventus RTL simulator init/restore failed\n");
+        return -1;
+    }
+    if (g_persistent_state.restoring()
+        && !g_allocation_contract.begin_restore(
+            g_persistent_state.expected_allocations(), persistent_error
+        )) {
+        fmt::print(stderr, "invalid persistent allocation contract: {}\n", persistent_error);
+        if (rtl().finish_checked != nullptr) {
+            rtl().finish_checked(device, false);
+        } else {
+            rtl().finish(device, false);
+        }
+        return -1;
+    }
+    if (g_persistent_state.restoring()) {
+        std::vector<RtlBufferAllocator::Allocation> expected;
+        expected.reserve(g_persistent_state.expected_allocations().size());
+        for (const auto &record : g_persistent_state.expected_allocations()) {
+            expected.push_back({
+                record.address,
+                record.requested_size,
+                record.allocated_size,
+                record.sequence,
+            });
+        }
+        if (!g_rtl_buffer_allocator.restore_allocations(expected)) {
+            fmt::print(stderr, "persistent allocator state cannot be reconstructed\n");
+            if (rtl().finish_checked != nullptr) {
+                rtl().finish_checked(device, false);
+            } else {
+                rtl().finish(device, false);
+            }
+            return -1;
+        }
     }
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
@@ -210,8 +352,21 @@ extern int vt_dev_close(vt_device_h hdevice) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     int result = 0;
+    if (g_kernel_inflight || g_persistent_state.pending_save()
+        || g_allocation_contract.compare_only()) {
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "vt_dev_close: persistent state boundary is incomplete "
+            "(kernel={}, save={}, rebind={})",
+            g_kernel_inflight, g_persistent_state.pending_save(),
+            g_allocation_contract.compare_only()
+        );
+        result = -1;
+    }
     if (rtl().finish_checked != nullptr) {
-        result = rtl().finish_checked(device, g_force_snapshot_rollback);
+        const int finish_result =
+            rtl().finish_checked(device, g_force_snapshot_rollback);
+        if (finish_result != 0) result = finish_result;
     } else {
         rtl().finish(device, g_force_snapshot_rollback);
     }
@@ -255,14 +410,59 @@ int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *value) {
 }
 
 extern int vt_buf_alloc(
-    vt_device_h hdevice, const uint64_t size, uint64_t *vaddr, int BUF_TYPE, uint64_t taskID,
+    vt_device_h hdevice, const uint64_t size, uint64_t *vaddr, int buffer_type, uint64_t taskID,
     uint64_t kernelID
 ) {
     // TODO: RTLSIM does not support Virtual Memory yet
     if (size <= 0 || hdevice == nullptr || vaddr == nullptr) return -1;
-    const paddr_t addr_allocated = g_rtl_buffer_allocator.alloc(size);
+    if (g_persistent_state.pending_save()) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_buf_alloc: state probe is required before the next allocation"
+        );
+        return -1;
+    }
+    paddr_t addr_allocated = 0;
+    RtlBufferAllocator::Allocation allocation;
+    std::string contract_error;
+    if (g_allocation_contract.compare_only()) {
+        ventus::rtl_state::AllocationRecord restored;
+        if (!g_allocation_contract.claim_restore_allocation(
+                size, buffer_type, taskID, kernelID, restored,
+                contract_error)
+            || !g_rtl_buffer_allocator.find_allocation(
+                restored.address, allocation)
+            || allocation.requested_size != restored.requested_size
+            || allocation.allocated_size != restored.allocated_size) {
+            SPDLOG_LOGGER_ERROR(
+                logger, "vt_buf_alloc: persistent allocation claim failed: {}",
+                contract_error
+            );
+            return -1;
+        }
+        addr_allocated = restored.address;
+    } else {
+        addr_allocated = g_rtl_buffer_allocator.alloc(size);
+        if (addr_allocated == 0
+            || !g_rtl_buffer_allocator.find_allocation(
+                addr_allocated, allocation)
+            || !g_allocation_contract.record_alloc(
+                addr_allocated, allocation.requested_size,
+                allocation.allocated_size, buffer_type, taskID, kernelID,
+                contract_error)) {
+            if (addr_allocated != 0) {
+                g_rtl_buffer_allocator.free(addr_allocated, size);
+            }
+            SPDLOG_LOGGER_ERROR(
+                logger, "vt_buf_alloc: persistent allocation contract failed: {}",
+                contract_error
+            );
+            return -1;
+        }
+    }
     if (addr_allocated == 0) {
-        SPDLOG_LOGGER_ERROR(logger, "vt_buf_alloc: buddy allocator failed, size=0x{:x}", size);
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_buf_alloc: buddy allocator failed, size=0x{:x}", size
+        );
         return -1;
     }
     SPDLOG_LOGGER_DEBUG(
@@ -278,9 +478,14 @@ extern int vt_buf_free(
     vt_device_h hdevice, uint64_t size, uint64_t *vaddr, uint64_t taskID, uint64_t kernelID
 ) {
     if (hdevice == nullptr) return -1;
-    if (vaddr == nullptr || !g_rtl_buffer_allocator.free(*vaddr, size)) {
+    std::string contract_error;
+    if (vaddr == nullptr
+        || !g_allocation_contract.record_free(*vaddr, size, contract_error)
+        || !g_rtl_buffer_allocator.free(*vaddr, size)) {
         SPDLOG_LOGGER_ERROR(
-            logger, "vt_buf_free: invalid free, vaddr=0x{:x}, size=0x{:x}", vaddr ? *vaddr : 0, size
+            logger,
+            "vt_buf_free: invalid free, vaddr=0x{:x}, size=0x{:x}, contract={}",
+            vaddr ? *vaddr : 0, size, contract_error
         );
         return -1;
     }
@@ -331,35 +536,64 @@ extern int vt_copy_to_dev(
     vt_device_h hdevice, uint64_t dev_vaddr, const void *src_addr, uint64_t size, uint64_t taskID,
     uint64_t kernelID
 ) {
-    if (hdevice == nullptr) return -1;
+    if (hdevice == nullptr || (src_addr == nullptr && size != 0)) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     SPDLOG_LOGGER_DEBUG(
         logger, "vt_copy_to_dev: dev_addr=0x{:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
         size, taskID, kernelID
     );
+    if (g_persistent_state.pending_save()) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_copy_to_dev: state probe is required before the next write"
+        );
+        return -1;
+    }
+    if (g_allocation_contract.compare_only()) {
+        if (!compare_device_bytes(device, dev_vaddr, src_addr, size)) {
+            SPDLOG_LOGGER_ERROR(
+                logger,
+                "vt_copy_to_dev: compare-only rebind mismatch at 0x{:x}, size=0x{:x}",
+                dev_vaddr, size
+            );
+            return -1;
+        }
+        return 0;
+    }
     if (rtl().dcache_host_invalidate != nullptr) {
         rtl().dcache_host_invalidate(device);
     }
-    rtl().pmemcpy_h2d(device, dev_vaddr, src_addr, size);
-    return 0;
+    return rtl().pmemcpy_h2d(device, dev_vaddr, src_addr, size) ? 0 : -1;
 }
 
 extern int vt_copy_from_dev(
     vt_device_h hdevice, uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint64_t taskID,
     uint64_t kernelID
 ) {
-    if (hdevice == nullptr) return -1;
+    if (hdevice == nullptr || (dst_addr == nullptr && size != 0)) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
+    if (finish_restore_rebind() != 0 || publish_pending_state(device) != 0) {
+        return -1;
+    }
     SPDLOG_LOGGER_DEBUG(
         logger, "vt_copy_from_dev: dev_addr=0x{:x}, size=0x{:x}, taskID={}, kernelID={}", dev_vaddr,
         size, taskID, kernelID
     );
-    rtl().pmemcpy_d2h(device, dst_addr, dev_vaddr, size);
-    return 0;
+    return rtl().pmemcpy_d2h(device, dst_addr, dev_vaddr, size) ? 0 : -1;
 }
 
 extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint64_t taskID) {
     if (hdevice == nullptr || mtd_driver == nullptr) return -1;
+    if (g_kernel_inflight || g_persistent_state.pending_save()
+        || g_allocation_contract.compare_only()) {
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "vt_start: persistent state is not ready "
+            "(kernel={}, save={}, rebind={})",
+            g_kernel_inflight, g_persistent_state.pending_save(),
+            g_allocation_contract.compare_only()
+        );
+        return -1;
+    }
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
     ventus_kernel_metadata_t mtd_sim{
         .name = mtd_driver->kernel_name,
@@ -399,6 +633,7 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
         mtd_driver->sgprUsage, mtd_driver->vgprUsage, mtd_driver->pdsBaseAddr
     );
     rtl().add_kernel(device, &mtd_sim, nullptr);
+    g_kernel_inflight = true;
     return 0;
 }
 
@@ -419,6 +654,10 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
         const ventus_rtlsim_step_result_t *result = rtl().step(device);
         if (ventus::rtlsim_watchdog::check_step_result(rtl(), device, result, "cache flush tail", logger) != 0) return -1;
     }
+    if (g_kernel_inflight) {
+        g_kernel_inflight = false;
+        g_persistent_state.note_kernel_complete();
+    }
     return 0;
 }
 
@@ -429,6 +668,12 @@ extern int vt_finish_all_kernel(vt_device_h hdevice, std::queue<int> *finished_k
 
 extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int taskID) {
     if (hdevice == nullptr) return -1;
+    if (g_persistent_state.pending_save()) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_upload_kernel_file: state probe is required before code upload"
+        );
+        return -1;
+    }
     auto device = (ventus_rtlsim_t *)hdevice;
     // uint64_t ptroot = ptroots[taskID];
 
@@ -445,9 +690,36 @@ extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int 
         SPDLOG_LOGGER_DEBUG(
             logger, "vt_upload_kernel_file {}: vaddr=0x{:x}, size=0x{:x}", filename, vaddr, size
         );
-        rtl().pmemcpy_h2d(device, vaddr, block->data.data(), block->data.size());
+        if (g_allocation_contract.compare_only()) {
+            if (!compare_device_bytes(
+                    device, vaddr, block->data.data(), block->data.size()
+                )) {
+                SPDLOG_LOGGER_ERROR(
+                    logger,
+                    "vt_upload_kernel_file: compare-only mismatch at 0x{:x}",
+                    vaddr
+                );
+                return -1;
+            }
+        } else if (!rtl().pmemcpy_h2d(
+                       device, vaddr, block->data.data(), block->data.size()
+                   )) {
+            return -1;
+        }
         std::vector<uint8_t> zeros(size - block->data.size(), 0);
-        rtl().pmemcpy_h2d(device, vaddr + block->data.size(), zeros.data(), zeros.size());
+        if (g_allocation_contract.compare_only()) {
+            if (!compare_device_bytes(
+                    device, vaddr + block->data.size(),
+                    zeros.data(), zeros.size()
+                )) {
+                return -1;
+            }
+        } else if (!rtl().pmemcpy_h2d(
+                       device, vaddr + block->data.size(),
+                       zeros.data(), zeros.size()
+                   )) {
+            return -1;
+        }
     }
     rtl().icache_invalidate(device);
     return 0;

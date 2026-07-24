@@ -32,6 +32,11 @@ struct Api {
     ventus_rtlsim_t *(*init)(const ventus_rtlsim_config_t *) = nullptr;
     void (*finish)(ventus_rtlsim_t *, bool) = nullptr;
     int (*finish_checked)(ventus_rtlsim_t *, bool) = nullptr;
+    int (*save_state)(ventus_rtlsim_t *, const char *) = nullptr;
+    ventus_rtlsim_t *(*restore_state)(
+        const ventus_rtlsim_config_t *, const char *
+    ) = nullptr;
+    uint32_t (*persistent_state_version)() = nullptr;
     const ventus_rtlsim_step_result_t *(*step)(ventus_rtlsim_t *) = nullptr;
     ventus_rtlsim_pmu_t (*get_pmu)(const ventus_rtlsim_t *) = nullptr;
     void (*icache_invalidate)(ventus_rtlsim_t *) = nullptr;
@@ -162,6 +167,16 @@ inline Api open_library(std::string_view soname, FirmwareApiRequirement firmware
     api.finish = load_symbol<void (*)(ventus_rtlsim_t *, bool)>(handle, "ventus_rtlsim_finish");
     api.finish_checked =
         load_optional_symbol<int (*)(ventus_rtlsim_t *, bool)>(handle, "ventus_rtlsim_finish_checked");
+    api.save_state = load_optional_symbol<int (*)(ventus_rtlsim_t *, const char *)>(
+        handle, "ventus_rtlsim_save_state"
+    );
+    api.restore_state = load_optional_symbol<
+        ventus_rtlsim_t *(*)(const ventus_rtlsim_config_t *, const char *)>(
+        handle, "ventus_rtlsim_restore_state"
+    );
+    api.persistent_state_version = load_optional_symbol<uint32_t (*)()>(
+        handle, "ventus_rtlsim_persistent_state_version"
+    );
     api.step = load_symbol<const ventus_rtlsim_step_result_t *(*)(ventus_rtlsim_t *)>(
         handle, "ventus_rtlsim_step"
     );

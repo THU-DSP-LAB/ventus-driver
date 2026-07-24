@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <list>
+#include <map>
 #include <vector>
 
 class RtlBufferAllocator {
@@ -13,6 +14,13 @@ public:
     static constexpr uint64_t kBaseAddr = 0x90000000ull;
     static constexpr uint64_t kMaxAddr = 0xffffffffull;
     static constexpr uint8_t kMaxOrder = 16;
+
+    struct Allocation {
+        uint64_t address;
+        uint64_t requested_size;
+        uint64_t allocated_size;
+        uint64_t sequence;
+    };
 
     RtlBufferAllocator() { reset(); }
 
@@ -31,6 +39,8 @@ public:
         assert(reserved_zero == 0);
         static_cast<void>(reserved_zero);
         used_pages_ = 0;
+        allocations_.clear();
+        next_sequence_ = 0;
     }
 
     uint64_t alloc(uint64_t size) {
@@ -40,19 +50,69 @@ public:
         const uint8_t order = log2_ceil(static_cast<uint32_t>(page_count));
         const elem_idx_t block = allocate_idx(order);
         if (block == 0) return 0;
-        return idx_to_addr(block);
+        const uint64_t address = idx_to_addr(block);
+        const Allocation allocation = {
+            address,
+            size,
+            (uint64_t{1} << order) * kPageSize,
+            next_sequence_++,
+        };
+        const bool inserted = allocations_.emplace(address, allocation).second;
+        assert(inserted);
+        static_cast<void>(inserted);
+        return address;
+    }
+
+    bool restore_allocations(const std::vector<Allocation>& expected) {
+        reset();
+        for (const auto& record : expected) {
+            const uint64_t address = alloc(record.requested_size);
+            Allocation observed{};
+            if (address != record.address
+                || !find_allocation(address, observed)
+                || observed.allocated_size != record.allocated_size) {
+                reset();
+                return false;
+            }
+        }
+        return true;
     }
 
     bool free(uint64_t addr, uint64_t size) {
         if (!is_page_aligned(addr) || addr < kBaseAddr || addr > kMaxAddr) return false;
 
-        const uint64_t page_count = calc_page_count(size);
-        if (page_count == 0 || page_count > kTotalPages) return false;
-
-        const uint8_t order = log2_ceil(static_cast<uint32_t>(page_count));
+        const auto allocation = allocations_.find(addr);
+        if (allocation == allocations_.end()
+            || allocation->second.requested_size != size) {
+            return false;
+        }
+        const uint8_t order = log2_ceil(
+            static_cast<uint32_t>(allocation->second.allocated_size / kPageSize));
         if (order > kMaxOrder) return false;
 
         free_idx(addr_to_idx(addr), order);
+        allocations_.erase(allocation);
+        return true;
+    }
+
+    std::vector<Allocation> active_allocations() const {
+        std::vector<Allocation> result;
+        result.reserve(allocations_.size());
+        for (const auto& entry : allocations_) {
+            result.push_back(entry.second);
+        }
+        std::sort(
+            result.begin(), result.end(),
+            [](const Allocation& lhs, const Allocation& rhs) {
+                return lhs.sequence < rhs.sequence;
+            });
+        return result;
+    }
+
+    bool find_allocation(uint64_t address, Allocation& allocation) const {
+        const auto found = allocations_.find(address);
+        if (found == allocations_.end()) return false;
+        allocation = found->second;
         return true;
     }
 
@@ -65,6 +125,8 @@ private:
 
     size_t used_pages_ = 0;
     std::vector<std::list<elem_idx_t>> free_lists_;
+    std::map<uint64_t, Allocation> allocations_;
+    uint64_t next_sequence_ = 0;
 
     static bool is_page_aligned(uint64_t addr) { return addr % kPageSize == 0; }
 
