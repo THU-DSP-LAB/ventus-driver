@@ -31,6 +31,7 @@ struct Api {
     int (*get_parameter)(const char *, uint32_t *) = nullptr;
     ventus_rtlsim_t *(*init)(const ventus_rtlsim_config_t *) = nullptr;
     void (*finish)(ventus_rtlsim_t *, bool) = nullptr;
+    int (*finish_checked)(ventus_rtlsim_t *, bool) = nullptr;
     const ventus_rtlsim_step_result_t *(*step)(ventus_rtlsim_t *) = nullptr;
     ventus_rtlsim_pmu_t (*get_pmu)(const ventus_rtlsim_t *) = nullptr;
     void (*icache_invalidate)(ventus_rtlsim_t *) = nullptr;
@@ -159,6 +160,8 @@ inline Api open_library(std::string_view soname, FirmwareApiRequirement firmware
         handle, "ventus_rtlsim_init"
     );
     api.finish = load_symbol<void (*)(ventus_rtlsim_t *, bool)>(handle, "ventus_rtlsim_finish");
+    api.finish_checked =
+        load_optional_symbol<int (*)(ventus_rtlsim_t *, bool)>(handle, "ventus_rtlsim_finish_checked");
     api.step = load_symbol<const ventus_rtlsim_step_result_t *(*)(ventus_rtlsim_t *)>(
         handle, "ventus_rtlsim_step"
     );

@@ -12,14 +12,18 @@
 #include "rtlsim_watchdog.hpp"
 #include "utils.hpp"
 #include "ventus_rtlsim.h"
+#include <climits>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fmt/core.h>
 #include <memory>
+#include <string>
+#include <system_error>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <stdlib.h>
-#include <string>
 #include <sys/types.h>
 
 // static std::map<int, uint64_t> ptroots; // pagetable root physical address
@@ -27,6 +31,8 @@ static std::shared_ptr<spdlog::logger> logger;
 
 namespace {
 RtlBufferAllocator g_rtl_buffer_allocator;
+bool g_force_snapshot_rollback = false;
+std::string g_snapshot_filename = "logs/ventus_rtlsim.snapshot.fst";
 
 spdlog::level::level_enum parse_log_level(const char *level) {
     if (level == nullptr || level[0] == '\0') return spdlog::level::warn;
@@ -67,6 +73,47 @@ const ventus::rtlsim_backend::Api &rtl() {
     return api;
 }
 
+bool parse_env_bool(const char *name, bool default_value, bool &value) {
+    const char *raw = std::getenv(name);
+    if (raw == nullptr) {
+        value = default_value;
+        return true;
+    }
+    const auto parsed = parse_bool(raw);
+    if (!parsed.has_value()) {
+        fmt::print(stderr, "{} must be a boolean, got '{}'\n", name, raw);
+        return false;
+    }
+    value = *parsed;
+    return true;
+}
+
+bool parse_env_u64(const char *name, uint64_t default_value, uint64_t &value) {
+    const char *raw = std::getenv(name);
+    if (raw == nullptr) {
+        value = default_value;
+        return true;
+    }
+    const auto parsed = parse_u64(raw);
+    if (!parsed.has_value()) {
+        fmt::print(stderr, "{} must be an unsigned integer, got '{}'\n", name, raw);
+        return false;
+    }
+    value = *parsed;
+    return true;
+}
+
+bool prepare_snapshot_directory(const std::string &filename) {
+    const std::filesystem::path parent = std::filesystem::path(filename).parent_path();
+    if (parent.empty()) return true;
+    std::error_code error;
+    std::filesystem::create_directories(parent, error);
+    if (error) {
+        fmt::print(stderr, "failed to create snapshot directory '{}': {}\n", parent.string(), error.message());
+        return false;
+    }
+    return true;
+}
 } // namespace
 
 /// open the device and connect to it
@@ -90,19 +137,66 @@ extern int vt_dev_open(vt_device_h *hdevice) {
 
     ventus_rtlsim_config_t config;
     rtl().get_default_config(&config);
+    g_snapshot_filename = config.snapshot.filename != nullptr
+        ? config.snapshot.filename
+        : "logs/ventus_rtlsim.snapshot.fst";
     config.sim_time_max = ~0ull;
     config.pmem.auto_alloc = true;
     config.waveform.enable = waveform_enable;
     config.waveform.time_begin = waveform_begin;
     config.waveform.time_end = waveform_end;
     config.waveform.filename = "waveform.rtl.fst";
-    config.snapshot.enable = false;
+    bool snapshot_enable = false;
+    bool force_snapshot_rollback = false;
+    uint64_t snapshot_interval = config.snapshot.time_interval;
+    uint64_t snapshot_count = static_cast<uint64_t>(config.snapshot.num_max);
+    if (!parse_env_bool("VENTUS_RTL_FORK_SNAPSHOT", false, snapshot_enable)
+        || !parse_env_bool("VENTUS_RTL_FORK_FORCE_ROLLBACK", false, force_snapshot_rollback)
+        || !parse_env_u64("VENTUS_RTL_FORK_INTERVAL", snapshot_interval, snapshot_interval)
+        || !parse_env_u64("VENTUS_RTL_FORK_MAX", snapshot_count, snapshot_count)) {
+        return -1;
+    }
+    if (snapshot_enable && (snapshot_interval == 0 || snapshot_count == 0 || snapshot_count > INT_MAX)) {
+        fmt::print(
+            stderr, "invalid fork snapshot configuration: interval={}, count={}\n", snapshot_interval,
+            snapshot_count
+        );
+        return -1;
+    }
+    if (force_snapshot_rollback && !snapshot_enable) {
+        fmt::print(stderr, "VENTUS_RTL_FORK_FORCE_ROLLBACK requires VENTUS_RTL_FORK_SNAPSHOT\n");
+        return -1;
+    }
+    if (const char *filename = std::getenv("VENTUS_RTL_FORK_FST")) {
+        if (filename[0] == '\0') {
+            fmt::print(stderr, "VENTUS_RTL_FORK_FST must not be empty\n");
+            return -1;
+        }
+        g_snapshot_filename = filename;
+    }
+    if (snapshot_enable && config.waveform.enable
+        && g_snapshot_filename == config.waveform.filename) {
+        fmt::print(stderr, "fork snapshot and normal waveform files must differ\n");
+        return -1;
+    }
+    if (snapshot_enable && !prepare_snapshot_directory(g_snapshot_filename)) {
+        return -1;
+    }
+    config.snapshot.enable = snapshot_enable;
+    config.snapshot.time_interval = snapshot_interval;
+    config.snapshot.num_max = static_cast<int>(snapshot_count);
+    config.snapshot.filename = g_snapshot_filename.c_str();
+    g_force_snapshot_rollback = force_snapshot_rollback;
     config.hang_timeout = ventus::rtlsim_watchdog::hang_timeout_from_env();
     const auto log_level = parse_log_level(std::getenv("VENTUS_RTLSIM_LOG_LEVEL"));
     config.log.console.enable = true;
     config.log.console.level = log_level_name(log_level);
     config.log.file.enable = false;
     auto device = rtl().init(&config);
+    if (device == nullptr) {
+        fmt::print(stderr, "ventus_rtlsim_init rejected the runtime configuration\n");
+        return -1;
+    }
     *hdevice = device;
     logger = spdlog::stdout_color_mt("ventus");
     logger->set_level(log_level);
@@ -115,9 +209,17 @@ extern int vt_dev_open(vt_device_h *hdevice) {
 extern int vt_dev_close(vt_device_h hdevice) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    rtl().finish(device, false);
+    int result = 0;
+    if (rtl().finish_checked != nullptr) {
+        result = rtl().finish_checked(device, g_force_snapshot_rollback);
+    } else {
+        rtl().finish(device, g_force_snapshot_rollback);
+    }
+    if (result != 0) {
+        SPDLOG_LOGGER_ERROR(logger, "vt_dev_close: RTL snapshot replay failed");
+    }
     SPDLOG_LOGGER_DEBUG(logger, "vt_dev_close : goodbye from ventus.cpp (rtlsim device)");
-    return 0;
+    return result;
 }
 int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *value) {
     if (value == nullptr) return -1;
