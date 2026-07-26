@@ -29,6 +29,10 @@ public:
     bool restoring() const { return restoring_; }
     bool pending_save() const { return pending_save_; }
     bool force_save_failure() const { return force_save_failure_; }
+    uint64_t graph_dispatch_base() const { return graph_dispatch_base_; }
+    uint64_t local_completed_dispatches() const {
+        return local_completed_dispatches_;
+    }
     uint64_t completed_dispatches() const { return completed_dispatches_; }
     const std::filesystem::path& resume_simulator_directory() const {
         return resume_simulator_directory_;
@@ -59,6 +63,8 @@ private:
     bool force_save_failure_ = false;
     uint64_t interval_ = 1;
     uint64_t retain_ = 2;
+    uint64_t graph_dispatch_base_ = 0;
+    uint64_t local_completed_dispatches_ = 0;
     uint64_t completed_dispatches_ = 0;
     std::string run_id_;
     std::filesystem::path state_root_;

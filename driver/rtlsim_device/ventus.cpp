@@ -583,14 +583,15 @@ extern int vt_copy_from_dev(
 
 extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint64_t taskID) {
     if (hdevice == nullptr || mtd_driver == nullptr) return -1;
-    if (g_kernel_inflight || g_persistent_state.pending_save()
-        || g_allocation_contract.compare_only()) {
+    if (g_allocation_contract.compare_only()
+        && finish_restore_rebind() != 0) {
+        return -1;
+    }
+    if (g_kernel_inflight || g_persistent_state.pending_save()) {
         SPDLOG_LOGGER_ERROR(
             logger,
-            "vt_start: persistent state is not ready "
-            "(kernel={}, save={}, rebind={})",
-            g_kernel_inflight, g_persistent_state.pending_save(),
-            g_allocation_contract.compare_only()
+            "vt_start: persistent state is not ready (kernel={}, save={})",
+            g_kernel_inflight, g_persistent_state.pending_save()
         );
         return -1;
     }
@@ -657,13 +658,18 @@ extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     if (g_kernel_inflight) {
         g_kernel_inflight = false;
         g_persistent_state.note_kernel_complete();
+        if (publish_pending_state(device) != 0) return -1;
     }
     return 0;
 }
 
 extern int vt_finish_all_kernel(vt_device_h hdevice, std::queue<int> *finished_kernel_list) {
-    // TODO: what is this function for? what is finished_kernel_list?
-    return -1;
+    static_cast<void>(finished_kernel_list);
+    if (hdevice == nullptr || g_kernel_inflight
+        || g_persistent_state.pending_save()) {
+        return -1;
+    }
+    return finish_restore_rebind();
 }
 
 extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int taskID) {

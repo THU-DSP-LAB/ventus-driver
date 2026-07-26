@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -22,16 +23,21 @@ void clear_environment() {
     unsetenv("VENTUS_RTL_STATE_RETAIN");
     unsetenv("VENTUS_RTL_STATE_RESUME");
     unsetenv("VENTUS_RTL_STATE_RUN_ID");
+    unsetenv("VENTUS_RTL_STATE_GRAPH_DISPATCH_BASE");
     unsetenv("VENTUS_RTL_STATE_FORCE_SAVE_FAILURE");
 }
 
 void configure_capture_environment(
-    const std::filesystem::path& root, bool force_failure = false) {
+    const std::filesystem::path& root, bool force_failure = false,
+    uint64_t graph_dispatch_base = 0) {
     clear_environment();
     setenv("VENTUS_RTL_STATE_DIR", root.c_str(), 1);
     setenv("VENTUS_RTL_STATE_INTERVAL", "1", 1);
     setenv("VENTUS_RTL_STATE_RETAIN", "2", 1);
     setenv("VENTUS_RTL_STATE_RUN_ID", kRunId, 1);
+    const std::string graph_base = std::to_string(graph_dispatch_base);
+    setenv(
+        "VENTUS_RTL_STATE_GRAPH_DISPATCH_BASE", graph_base.c_str(), 1);
     if (force_failure) {
         setenv("VENTUS_RTL_STATE_FORCE_SAVE_FAILURE", "true", 1);
     }
@@ -92,6 +98,39 @@ int main() {
         std::filesystem::exists(kRoot / "latest.json"),
         "latest index was not published");
 
+    const auto resumed_capture_root = kRoot / "graph-base";
+    configure_capture_environment(resumed_capture_root, false, 16);
+    PersistentState resumed_capture;
+    require(
+        resumed_capture.configure_from_env(error),
+        "graph-base capture configuration failed");
+    require(
+        resumed_capture.graph_dispatch_base() == 16
+            && resumed_capture.completed_dispatches() == 16
+            && resumed_capture.local_completed_dispatches() == 0,
+        "graph-base capture did not initialize global dispatch numbering");
+    resumed_capture.note_kernel_complete();
+    require(
+        resumed_capture.publish_pending(
+            116, allocations(), immutable_regions(), save_fake_simulator,
+            error),
+        "graph-base state publication failed");
+    require(
+        std::filesystem::exists(
+            resumed_capture_root / "dispatch-000017" / "COMPLETE"),
+        "graph-base capture used a local snapshot ordinal");
+    nlohmann::json resumed_manifest;
+    {
+        std::ifstream input(
+            resumed_capture_root / "dispatch-000017" / "manifest.json");
+        input >> resumed_manifest;
+    }
+    require(
+        resumed_manifest.at("graph_dispatch_base") == 16
+            && resumed_manifest.at("local_completed_dispatches") == 1
+            && resumed_manifest.at("completed_dispatches") == 17,
+        "graph-base manifest counters are inconsistent");
+
     clear_environment();
     setenv(
         "VENTUS_RTL_STATE_RESUME",
@@ -102,6 +141,10 @@ int main() {
     require(
         restore.completed_dispatches() == 3,
         "resume dispatch ordinal was not restored");
+    require(
+        restore.graph_dispatch_base() == 3
+            && restore.local_completed_dispatches() == 0,
+        "resume did not start a new local dispatch suffix");
     require(
         restore.expected_allocations().size() == 2,
         "resume allocation contract was not loaded");

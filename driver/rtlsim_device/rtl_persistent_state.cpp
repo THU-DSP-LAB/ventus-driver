@@ -120,6 +120,23 @@ bool parse_positive_env(
     return true;
 }
 
+bool parse_nonnegative_env(
+    const char* name, uint64_t default_value, uint64_t& value,
+    std::string& error) {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr) {
+        value = default_value;
+        return true;
+    }
+    const auto parsed = parse_u64(raw);
+    if (!parsed.has_value()) {
+        error = std::string(name) + " must be a non-negative integer";
+        return false;
+    }
+    value = *parsed;
+    return true;
+}
+
 bool valid_run_id(const std::string& run_id) {
     return run_id.size() == 32
         && std::all_of(
@@ -204,18 +221,24 @@ bool PersistentState::configure_from_env(std::string& error) {
     const char* run_id_raw = std::getenv("VENTUS_RTL_STATE_RUN_ID");
     const char* interval_raw = std::getenv("VENTUS_RTL_STATE_INTERVAL");
     const char* retain_raw = std::getenv("VENTUS_RTL_STATE_RETAIN");
+    const char* graph_base_raw =
+        std::getenv("VENTUS_RTL_STATE_GRAPH_DISPATCH_BASE");
     const char* force_raw = std::getenv("VENTUS_RTL_STATE_FORCE_SAVE_FAILURE");
 
     if (root_raw == nullptr && resume_raw == nullptr) {
         if (run_id_raw != nullptr || interval_raw != nullptr
-            || retain_raw != nullptr || force_raw != nullptr) {
+            || retain_raw != nullptr || graph_base_raw != nullptr
+            || force_raw != nullptr) {
             error = "RTL state options require VENTUS_RTL_STATE_DIR or VENTUS_RTL_STATE_RESUME";
             return false;
         }
         return true;
     }
     if (!parse_positive_env("VENTUS_RTL_STATE_INTERVAL", 1, interval_, error)
-        || !parse_positive_env("VENTUS_RTL_STATE_RETAIN", 2, retain_, error)) {
+        || !parse_positive_env("VENTUS_RTL_STATE_RETAIN", 2, retain_, error)
+        || !parse_nonnegative_env(
+            "VENTUS_RTL_STATE_GRAPH_DISPATCH_BASE", 0,
+            graph_dispatch_base_, error)) {
         return false;
     }
     if (retain_ > 1024) {
@@ -261,7 +284,17 @@ bool PersistentState::configure_from_env(std::string& error) {
         if (!load_resume(std::filesystem::absolute(resume_raw), error)) {
             return false;
         }
+        if (graph_base_raw != nullptr
+            && graph_dispatch_base_ != completed_dispatches_) {
+            error =
+                "VENTUS_RTL_STATE_GRAPH_DISPATCH_BASE must match the resume boundary";
+            return false;
+        }
+        graph_dispatch_base_ = completed_dispatches_;
+        local_completed_dispatches_ = 0;
         restoring_ = true;
+    } else {
+        completed_dispatches_ = graph_dispatch_base_;
     }
     return true;
 }
@@ -295,6 +328,28 @@ bool PersistentState::load_resume(
         if (completed_dispatches_ == 0) {
             error = "RTL state completed dispatch count is invalid";
             return false;
+        }
+        const bool has_graph_base = manifest.contains("graph_dispatch_base");
+        const bool has_local_completed =
+            manifest.contains("local_completed_dispatches");
+        if (has_graph_base != has_local_completed) {
+            error = "RTL state dispatch numbering is incomplete";
+            return false;
+        }
+        if (has_graph_base) {
+            const uint64_t saved_graph_base =
+                manifest.at("graph_dispatch_base");
+            const uint64_t saved_local_completed =
+                manifest.at("local_completed_dispatches");
+            if (saved_local_completed == 0
+                || saved_graph_base
+                    > std::numeric_limits<uint64_t>::max()
+                        - saved_local_completed
+                || saved_graph_base + saved_local_completed
+                    != completed_dispatches_) {
+                error = "RTL state dispatch numbering is invalid";
+                return false;
+            }
         }
         const auto allocations_path = directory / kAllocationsFilename;
         const auto simulator_path = directory / kSimulatorDirectory;
@@ -354,6 +409,7 @@ bool PersistentState::load_resume(
 }
 
 void PersistentState::note_kernel_complete() {
+    ++local_completed_dispatches_;
     ++completed_dispatches_;
     if (capture_enabled_ && completed_dispatches_ % interval_ == 0) {
         pending_save_ = true;
@@ -422,7 +478,9 @@ bool PersistentState::publish_pending(
             {"allocation_count", allocations.size()},
             {"allocations_sha256", allocations_sha},
             {"completed_dispatches", completed_dispatches_},
+            {"graph_dispatch_base", graph_dispatch_base_},
             {"immutable_region_count", immutable_regions.size()},
+            {"local_completed_dispatches", local_completed_dispatches_},
             {"run_id", run_id_},
             {"saved_time", saved_time},
             {"schema_version", kSchemaVersion},
@@ -441,6 +499,8 @@ bool PersistentState::publish_pending(
         }
         const nlohmann::json latest = {
             {"completed_dispatches", completed_dispatches_},
+            {"graph_dispatch_base", graph_dispatch_base_},
+            {"local_completed_dispatches", local_completed_dispatches_},
             {"manifest_sha256", sha256_file(target / kManifestFilename)},
             {"path", target.filename().string()},
             {"schema_version", kSchemaVersion},
