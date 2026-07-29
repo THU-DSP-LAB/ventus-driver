@@ -186,7 +186,7 @@ FieldMajorRecord make_trace_record(uint64_t accel, uint32_t generation)
     field(TraceField::TlasAddrHi, uint32_t(accel >> 32));
     field(TraceField::CullMask, 0xff);
     field(TraceField::SbtOffset, 2);
-    field(TraceField::SbtStride, 96);
+    field(TraceField::SbtStride, 3);
     field(TraceField::DirectionZ, float_bits(1.0f));
     field(TraceField::Tmax, float_bits(100.0f));
     field(TraceField::PayloadLo, 0x34567000);
@@ -288,13 +288,13 @@ void write_procedural_scene(DriverFixture &fixture, const TestLayout &layout,
     write_vec3(fixture, aabb + aabb_max, 1.0f, 1.0f, 6.0f);
     fixture.store_u32(aabb + aabb_primitive_id, 19);
     fixture.store_u32(aabb + aabb_geometry_id, 3);
-    fixture.store_u32(aabb + aabb_sbt_record_offset, 7);
+    fixture.store_u32(aabb + aabb_sbt_record_offset, 0);
     fixture.store_u32(aabb + aabb_flags, 1);
     fixture.store_u32(aabb + aabb_primitive_addr_lo,
                       uint32_t(fixture.address(0x18000)));
     fixture.store_u32(aabb + aabb_primitive_addr_lo + sizeof(uint32_t), 0);
 
-    fixture.store_u32(layout.hit_sbt + 14 * 96 + 4, 9);
+    fixture.store_u32(layout.hit_sbt + 16 * 96 + 4, 9);
 }
 
 vt_rt_resume_request get_one_request(vt_device_h device)
@@ -433,6 +433,22 @@ void check_intersection_resume(DriverFixture &fixture, const TestLayout &layout)
 
     const CompletionPlaneLayout completion =
         make_completion_layout_for_test(info);
+    assert(fixture.load_device_u32(completion_field_address(
+               completion,
+               add_field(CompletionField::CandidateHitBase,
+                         hit_record_sbt_index),
+               ref)) == 16);
+    const uint64_t shader_record = layout.hit_sbt + 16 * 96 + 32;
+    assert(fixture.load_device_u32(completion_field_address(
+               completion,
+               add_field(CompletionField::CandidateHitBase,
+                         hit_record_shader_record_ptr_lo),
+               ref)) == uint32_t(shader_record));
+    assert(fixture.load_device_u32(completion_field_address(
+               completion,
+               add_field(CompletionField::CandidateHitBase,
+                         hit_record_shader_record_ptr_hi),
+               ref)) == uint32_t(shader_record >> 32));
     for (uint32_t word = 0; word < kHitRecordWordCount; ++word) {
         const uint32_t value = fixture.load_device_u32(
             completion_field_address(
