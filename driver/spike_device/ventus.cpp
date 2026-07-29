@@ -8,10 +8,13 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <array>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include "ventus.h"
 #include "spike_main.h"
@@ -22,6 +25,34 @@ static_assert(sizeof(vt_kernel_metadata_t) == sizeof(meta_data),
 static_assert(offsetof(vt_kernel_metadata_t, pdsResidentWgCount) ==
                  offsetof(meta_data, pdsResidentWgCount),
               "Spike resident-workgroup metadata offset mismatch");
+static_assert(sizeof(vt_rt_global_consume_info) == 88,
+              "RT global consume C ABI size mismatch");
+static_assert(offsetof(vt_rt_global_consume_info, capacity_rays) == 40 &&
+                  offsetof(vt_rt_global_consume_info,
+                           miss_sbt_stride_bytes) == 56 &&
+                  offsetof(vt_rt_global_consume_info,
+                           candidate_hit_attribute_base) == 72 &&
+                  offsetof(vt_rt_global_consume_info, reserved) == 84,
+              "RT global consume C ABI offset mismatch");
+static_assert(sizeof(vt_rt_resume_request) == 48 &&
+                  offsetof(vt_rt_resume_request, ray_ref) == 8 &&
+                  offsetof(vt_rt_resume_request, callback_group) == 16 &&
+                  offsetof(vt_rt_resume_request, launch_id_z) == 40,
+              "RT resume request C ABI layout mismatch");
+static_assert(
+    VT_RT_COMPLETED_STAGE_MISS ==
+            static_cast<int>(
+                ventus_rt_wavefront::TraversalDispatchTarget::Miss) &&
+        VT_RT_COMPLETED_STAGE_CLOSEST_HIT ==
+            static_cast<int>(
+                ventus_rt_wavefront::TraversalDispatchTarget::ClosestHit) &&
+        VT_RT_COMPLETED_STAGE_ANY_HIT_CANDIDATE ==
+            static_cast<int>(
+                ventus_rt_wavefront::TraversalDispatchTarget::AnyHitCandidate) &&
+        VT_RT_COMPLETED_STAGE_INTERSECTION_CANDIDATE ==
+            static_cast<int>(ventus_rt_wavefront::TraversalDispatchTarget::
+                                 IntersectionCandidate),
+    "RT completed-stage C ABI mismatch");
 
 namespace {
 
@@ -56,11 +87,37 @@ private:
 };
 
 struct RtGlobalSession {
-    explicit RtGlobalSession(spike_device &device)
-        : memory(device), consumer(memory) {}
+    RtGlobalSession(spike_device &device,
+                    const vt_rt_global_consume_info &consume_info,
+                    uint32_t generation)
+        : memory(device), rtcore_model(), consumer(memory, rtcore_model),
+          binding(consume_info), queue_generation(generation) {}
+
+    bool matches(const vt_rt_global_consume_info &info,
+                 uint32_t generation) const
+    {
+        return queue_generation == generation &&
+               binding.queue_base == info.queue_base &&
+               binding.completion_base == info.completion_base &&
+               binding.hit_attribute_base == info.hit_attribute_base &&
+               binding.miss_sbt_base == info.miss_sbt_base &&
+               binding.hit_sbt_base == info.hit_sbt_base &&
+               binding.capacity_rays == info.capacity_rays &&
+               binding.hit_attribute_stride_bytes ==
+                   info.hit_attribute_stride_bytes &&
+               binding.miss_sbt_stride_bytes == info.miss_sbt_stride_bytes &&
+               binding.hit_sbt_stride_bytes == info.hit_sbt_stride_bytes &&
+               binding.candidate_hit_attribute_base ==
+                   info.candidate_hit_attribute_base &&
+               binding.candidate_hit_attribute_stride_bytes ==
+                   info.candidate_hit_attribute_stride_bytes;
+    }
 
     SpikeDeviceMemory memory;
+    ventus_rt::RtCoreModel rtcore_model;
     ventus_rt_wavefront::GlobalWavefrontConsumer<SpikeDeviceMemory> consumer;
+    vt_rt_global_consume_info binding;
+    uint32_t queue_generation;
     std::vector<vt_rt_resume_request> resume_requests;
 };
 
@@ -68,12 +125,25 @@ std::mutex rt_global_sessions_mutex;
 std::unordered_map<spike_device *, std::unique_ptr<RtGlobalSession>>
     rt_global_sessions;
 
-RtGlobalSession &get_rt_global_session(spike_device &device)
+RtGlobalSession *find_rt_global_session(spike_device &device)
+{
+    const auto it = rt_global_sessions.find(&device);
+    return it == rt_global_sessions.end() ? nullptr : it->second.get();
+}
+
+RtGlobalSession *bind_rt_global_session(
+    spike_device &device, const vt_rt_global_consume_info &info,
+    uint32_t generation)
 {
     auto &session = rt_global_sessions[&device];
-    if (!session)
-        session = std::make_unique<RtGlobalSession>(device);
-    return *session;
+    if (!session) {
+        session = std::make_unique<RtGlobalSession>(device, info, generation);
+    } else if (!session->matches(info, generation)) {
+        if (session->rtcore_model.debugSnapshot().private_context_count != 0)
+            return nullptr;
+        session = std::make_unique<RtGlobalSession>(device, info, generation);
+    }
+    return session.get();
 }
 
 void erase_rt_global_session(spike_device *device)
@@ -84,13 +154,221 @@ void erase_rt_global_session(spike_device *device)
 
 bool valid_rt_global_consume_info(const vt_rt_global_consume_info &info)
 {
-    return info.queue_base != 0 && info.completion_base != 0 &&
-           info.hit_attribute_base != 0 &&
-           info.candidate_hit_attribute_base != 0 && info.capacity_rays != 0 &&
-           info.hit_attribute_stride_bytes >= 2 * sizeof(uint32_t) &&
-           info.candidate_hit_attribute_stride_bytes >= 2 * sizeof(uint32_t) &&
-           info.miss_sbt_base != 0 && info.miss_sbt_stride_bytes != 0 &&
-           info.hit_sbt_base != 0 && info.hit_sbt_stride_bytes != 0;
+    struct AddressRange {
+        uint64_t begin;
+        uint64_t end;
+    };
+    const auto aligned = [](uint64_t value, uint64_t alignment) {
+        return (value & (alignment - 1)) == 0;
+    };
+    const auto range = [](uint64_t begin, uint64_t size,
+                          AddressRange *out) {
+        if (!out || size == 0 ||
+            begin > std::numeric_limits<uint64_t>::max() - size)
+            return false;
+        *out = {begin, begin + size};
+        return true;
+    };
+    const auto disjoint = [](const AddressRange &left,
+                             const AddressRange &right) {
+        return left.end <= right.begin || right.end <= left.begin;
+    };
+    if (info.queue_base == 0 || info.completion_base == 0 ||
+        info.hit_attribute_base == 0 ||
+        info.candidate_hit_attribute_base == 0 || info.capacity_rays == 0 ||
+        (info.max_batch_rays != 0 &&
+         info.max_batch_rays > info.capacity_rays) ||
+        info.hit_attribute_stride_bytes < 2 * sizeof(uint32_t) ||
+        info.candidate_hit_attribute_stride_bytes < 2 * sizeof(uint32_t) ||
+        info.miss_sbt_base == 0 ||
+        info.miss_sbt_stride_bytes <
+            ventus_rt_wavefront::kShaderGroupHandleIndexOffset +
+                sizeof(uint32_t) ||
+        info.hit_sbt_base == 0 ||
+        info.hit_sbt_stride_bytes <
+            ventus_rt_wavefront::kShaderGroupHandleSize ||
+        !aligned(info.queue_base,
+                 ventus_rt_wavefront::kQueueAlignmentBytes) ||
+        !aligned(info.completion_base,
+                 ventus_rt_wavefront::kQueueAlignmentBytes) ||
+        !aligned(info.hit_attribute_base, sizeof(uint32_t)) ||
+        !aligned(info.candidate_hit_attribute_base, sizeof(uint32_t)) ||
+        !aligned(info.miss_sbt_base, sizeof(uint32_t)) ||
+        !aligned(info.hit_sbt_base, sizeof(uint32_t)) ||
+        !aligned(info.hit_attribute_stride_bytes, sizeof(uint32_t)) ||
+        !aligned(info.candidate_hit_attribute_stride_bytes,
+                 sizeof(uint32_t)) ||
+        !aligned(info.miss_sbt_stride_bytes, sizeof(uint32_t)) ||
+        !aligned(info.hit_sbt_stride_bytes, sizeof(uint32_t)) ||
+        info.reserved != 0)
+        return false;
+
+    const uint64_t queue_size =
+        ventus_rt_wavefront::kQueueHeaderBytes +
+        uint64_t(ventus_rt_wavefront::kTraceFieldCount) *
+            ventus_rt_wavefront::queue_field_stride_bytes(
+                info.capacity_rays);
+    const uint64_t completion_size =
+        ventus_rt_wavefront::kCompletionHeaderBytes +
+        uint64_t(ventus_rt_wavefront::kCompletionFieldCount) *
+            ventus_rt_wavefront::completion_field_stride_bytes(
+                info.capacity_rays);
+    const uint64_t hit_attribute_size =
+        uint64_t(info.capacity_rays) * info.hit_attribute_stride_bytes;
+    const uint64_t candidate_attribute_size =
+        uint64_t(info.capacity_rays) *
+        info.candidate_hit_attribute_stride_bytes;
+    AddressRange queue_range = {};
+    AddressRange completion_range = {};
+    AddressRange hit_attribute_range = {};
+    AddressRange candidate_attribute_range = {};
+    AddressRange miss_sbt_range = {};
+    AddressRange hit_sbt_range = {};
+    if (!range(info.queue_base, queue_size, &queue_range) ||
+        !range(info.completion_base, completion_size, &completion_range) ||
+        !range(info.hit_attribute_base, hit_attribute_size,
+               &hit_attribute_range) ||
+        !range(info.candidate_hit_attribute_base, candidate_attribute_size,
+               &candidate_attribute_range) ||
+        !range(info.miss_sbt_base, info.miss_sbt_stride_bytes,
+               &miss_sbt_range) ||
+        !range(info.hit_sbt_base, info.hit_sbt_stride_bytes, &hit_sbt_range))
+        return false;
+
+    return disjoint(queue_range, completion_range) &&
+           disjoint(queue_range, hit_attribute_range) &&
+           disjoint(queue_range, candidate_attribute_range) &&
+           disjoint(completion_range, hit_attribute_range) &&
+           disjoint(completion_range, candidate_attribute_range) &&
+           disjoint(hit_attribute_range, candidate_attribute_range);
+}
+
+struct RtQueueHeader {
+    uint32_t capacity;
+    uint32_t reserve_tail;
+    uint32_t consume_head;
+    uint32_t overflow;
+    uint32_t generation;
+};
+
+RtQueueHeader read_queue_header(SpikeDeviceMemory &memory, uint64_t queue_base)
+{
+    const auto load = [&](uint32_t word) {
+        return memory.load_u32(queue_base + word * sizeof(uint32_t));
+    };
+    return {
+        load(ventus_rt_wavefront::kQueueCapacityWord),
+        load(ventus_rt_wavefront::kQueueReserveTailWord),
+        load(ventus_rt_wavefront::kQueueConsumeHeadWord),
+        load(ventus_rt_wavefront::kQueueOverflowWord),
+        load(ventus_rt_wavefront::kQueueGenerationWord),
+    };
+}
+
+bool valid_queue_header(const RtQueueHeader &header,
+                        const vt_rt_global_consume_info &info)
+{
+    return header.capacity == info.capacity_rays && header.overflow == 0 &&
+           header.consume_head <= header.reserve_tail &&
+           header.reserve_tail <= header.capacity;
+}
+
+bool queue_records_are_ready(SpikeDeviceMemory &memory,
+                             const vt_rt_global_consume_info &info,
+                             const RtQueueHeader &header)
+{
+    const uint64_t stride =
+        ventus_rt_wavefront::queue_field_stride_bytes(info.capacity_rays);
+    for (uint32_t ray_ref = header.consume_head;
+         ray_ref < header.reserve_tail; ++ray_ref) {
+        if (memory.load_u32(ventus_rt_wavefront::queue_field_address(
+                info.queue_base, stride,
+                ventus_rt_wavefront::TraceField::Ready, ray_ref)) == 0)
+            return false;
+    }
+    return true;
+}
+
+ventus_rt_wavefront::CompletionPlaneLayout
+make_completion_layout(const vt_rt_global_consume_info &info)
+{
+    return {
+        .base_address = info.completion_base,
+        .capacity = info.capacity_rays,
+        .hit_attribute_base_address = info.hit_attribute_base,
+        .hit_attribute_stride_bytes = info.hit_attribute_stride_bytes,
+        .candidate_hit_attribute_base_address =
+            info.candidate_hit_attribute_base,
+        .candidate_hit_attribute_stride_bytes =
+            info.candidate_hit_attribute_stride_bytes,
+        .miss_sbt_base_address = info.miss_sbt_base,
+        .miss_sbt_stride_bytes = info.miss_sbt_stride_bytes,
+        .hit_sbt_base_address = info.hit_sbt_base,
+        .hit_sbt_stride_bytes = info.hit_sbt_stride_bytes,
+    };
+}
+
+void retain_resume_requests(
+    RtGlobalSession &session,
+    const std::vector<ventus_rt_wavefront::TraversalDispatchResult> &results)
+{
+    session.resume_requests.clear();
+    for (const auto &request : session.consumer.resume_requests(results)) {
+        session.resume_requests.push_back({
+            .payload_address = request.payload_address,
+            .ray_ref = request.ray_ref,
+            .completed_stage = static_cast<uint32_t>(request.completed_stage),
+            .callback_group = request.callback_group,
+            .cps_frame = request.cps_frame,
+            .cps_stack_size = request.cps_stack_size,
+            .continuation_id = request.continuation_id,
+            .launch_id_x = request.launch_id_x,
+            .launch_id_y = request.launch_id_y,
+            .launch_id_z = request.launch_id_z,
+        });
+    }
+}
+
+bool session_binding_is_current(
+    RtGlobalSession &session, const vt_rt_global_consume_info &info)
+{
+    const RtQueueHeader header =
+        read_queue_header(session.memory, info.queue_base);
+    return valid_queue_header(header, info) &&
+           session.matches(info, header.generation);
+}
+
+bool valid_resume_refs(
+    RtGlobalSession &session, const vt_rt_global_consume_info &info,
+    const uint32_t *ray_refs, uint32_t ray_ref_count,
+    uint32_t expected_candidate_status)
+{
+    if (!session_binding_is_current(session, info))
+        return false;
+    if (ray_ref_count > info.capacity_rays)
+        return false;
+
+    std::unordered_set<uint32_t> unique_refs;
+    unique_refs.reserve(ray_ref_count);
+    for (uint32_t i = 0; i < ray_ref_count; ++i) {
+        const uint32_t ray_ref = ray_refs[i];
+        if (ray_ref >= info.capacity_rays || !unique_refs.insert(ray_ref).second)
+            return false;
+        const auto *record = session.consumer.completion_arena().find(ray_ref);
+        if (!record ||
+            record->state != ventus_rt_wavefront::CompletionState::Candidate ||
+            record->candidate_status != expected_candidate_status)
+            return false;
+    }
+    return true;
+}
+
+int fail_rt_global_session(spike_device *device, uint32_t *out_request_count)
+{
+    rt_global_sessions.erase(device);
+    if (out_request_count)
+        *out_request_count = 0;
+    return -1;
 }
 
 } // namespace
@@ -219,58 +497,46 @@ extern int vt_rt_consume_global(vt_device_h hdevice,
                                 const vt_rt_global_consume_info *info,
                                 uint32_t *out_request_count)
 {
+    if (out_request_count)
+        *out_request_count = 0;
     if (!hdevice || !info || !out_request_count ||
         !valid_rt_global_consume_info(*info))
         return -1;
 
     auto *device = static_cast<spike_device *>(hdevice);
     std::lock_guard<std::mutex> lock(rt_global_sessions_mutex);
-    RtGlobalSession &session = get_rt_global_session(*device);
-    if (session.memory.load_u32(info->queue_base +
-                                ventus_rt_wavefront::kQueueCapacityWord *
-                                    sizeof(uint32_t)) != info->capacity_rays)
+    SpikeDeviceMemory probe(*device);
+    const RtQueueHeader header = read_queue_header(probe, info->queue_base);
+    if (!valid_queue_header(header, *info) ||
+        !queue_records_are_ready(probe, *info, header))
         return -1;
+    RtGlobalSession *session =
+        bind_rt_global_session(*device, *info, header.generation);
+    if (!session ||
+        session->rtcore_model.debugSnapshot().private_context_count != 0)
+        return -1;
+    session->resume_requests.clear();
 
     const std::vector<ventus_rt_wavefront::TraversalDispatchResult> results =
-        session.consumer.consume_producer_phase(info->queue_base,
-                                                info->max_batch_rays);
-    const ventus_rt_wavefront::CompletionPlaneLayout completion_layout = {
-        .base_address = info->completion_base,
-        .capacity = info->capacity_rays,
-        .hit_attribute_base_address = info->hit_attribute_base,
-        .hit_attribute_stride_bytes = info->hit_attribute_stride_bytes,
-        .candidate_hit_attribute_base_address =
-            info->candidate_hit_attribute_base,
-        .candidate_hit_attribute_stride_bytes =
-            info->candidate_hit_attribute_stride_bytes,
-        .miss_sbt_base_address = info->miss_sbt_base,
-        .miss_sbt_stride_bytes = info->miss_sbt_stride_bytes,
-        .hit_sbt_base_address = info->hit_sbt_base,
-        .hit_sbt_stride_bytes = info->hit_sbt_stride_bytes,
-    };
+        session->consumer.consume_producer_phase(info->queue_base,
+                                                 info->max_batch_rays);
+    const RtQueueHeader consumed =
+        read_queue_header(session->memory, info->queue_base);
+    if (!valid_queue_header(consumed, *info) ||
+        consumed.generation != header.generation ||
+        consumed.consume_head != consumed.reserve_tail)
+        return fail_rt_global_session(device, out_request_count);
+    const auto completion_layout = make_completion_layout(*info);
     for (const auto &result : results) {
         if (!ventus_rt_wavefront::write_global_completion(
-                session.memory, completion_layout, result,
-                session.consumer.completion_arena()))
-            return -1;
+                session->memory, completion_layout, result,
+                session->consumer.completion_arena()))
+            return fail_rt_global_session(device, out_request_count);
     }
 
-    session.resume_requests.clear();
-    for (const auto &request : session.consumer.resume_requests(results)) {
-        session.resume_requests.push_back({
-            .payload_address = request.payload_address,
-            .ray_ref = request.ray_ref,
-            .completed_stage = static_cast<uint32_t>(request.completed_stage),
-            .callback_group = request.callback_group,
-            .cps_frame = request.cps_frame,
-            .cps_stack_size = request.cps_stack_size,
-            .continuation_id = request.continuation_id,
-            .launch_id_x = request.launch_id_x,
-            .launch_id_y = request.launch_id_y,
-            .launch_id_z = request.launch_id_z,
-        });
-    }
-    *out_request_count = session.resume_requests.size();
+    retain_resume_requests(*session, results);
+    *out_request_count =
+        static_cast<uint32_t>(session->resume_requests.size());
     return 0;
 }
 
@@ -284,15 +550,20 @@ extern int vt_rt_get_resume_requests(vt_device_h hdevice,
 
     auto *device = static_cast<spike_device *>(hdevice);
     std::lock_guard<std::mutex> lock(rt_global_sessions_mutex);
-    RtGlobalSession &session = get_rt_global_session(*device);
-    const uint32_t count = session.resume_requests.size();
+    RtGlobalSession *session = find_rt_global_session(*device);
+    if (!session) {
+        *out_request_count = 0;
+        return -1;
+    }
+    const uint32_t count =
+        static_cast<uint32_t>(session->resume_requests.size());
     *out_request_count = count;
     if (!requests && capacity == 0)
         return 0;
     if (!requests || capacity < count)
         return -2;
     for (uint32_t i = 0; i < count; ++i)
-        requests[i] = session.resume_requests[i];
+        requests[i] = session->resume_requests[i];
     return 0;
 }
 
@@ -301,34 +572,28 @@ extern int vt_rt_resume_global_candidates(
     const uint32_t *ray_refs, uint32_t ray_ref_count,
     uint32_t *out_request_count)
 {
+    if (out_request_count)
+        *out_request_count = 0;
     if (!hdevice || !info || !ray_refs || !ray_ref_count || !out_request_count ||
         !valid_rt_global_consume_info(*info))
         return -1;
 
     auto *device = static_cast<spike_device *>(hdevice);
     std::lock_guard<std::mutex> lock(rt_global_sessions_mutex);
-    RtGlobalSession &session = get_rt_global_session(*device);
-    const ventus_rt_wavefront::CompletionPlaneLayout completion_layout = {
-        .base_address = info->completion_base,
-        .capacity = info->capacity_rays,
-        .hit_attribute_base_address = info->hit_attribute_base,
-        .hit_attribute_stride_bytes = info->hit_attribute_stride_bytes,
-        .candidate_hit_attribute_base_address =
-            info->candidate_hit_attribute_base,
-        .candidate_hit_attribute_stride_bytes =
-            info->candidate_hit_attribute_stride_bytes,
-        .miss_sbt_base_address = info->miss_sbt_base,
-        .miss_sbt_stride_bytes = info->miss_sbt_stride_bytes,
-        .hit_sbt_base_address = info->hit_sbt_base,
-        .hit_sbt_stride_bytes = info->hit_sbt_stride_bytes,
-    };
+    RtGlobalSession *session = find_rt_global_session(*device);
+    if (!session ||
+        !valid_resume_refs(
+            *session, *info, ray_refs, ray_ref_count,
+            ventus_rt::traversal_candidate_non_opaque_triangle))
+        return -1;
+    const auto completion_layout = make_completion_layout(*info);
 
+    std::vector<ventus_rt_wavefront::CompletionAction> actions;
+    actions.reserve(ray_ref_count);
     for (uint32_t i = 0; i < ray_ref_count; ++i) {
         const uint32_t ray_ref = ray_refs[i];
-        if (ray_ref >= info->capacity_rays)
-            return -1;
         const auto control = [&](uint32_t word) {
-            return session.memory.load_u32(
+            return session->memory.load_u32(
                 ventus_rt_wavefront::completion_field_address(
                     completion_layout,
                     static_cast<ventus_rt_wavefront::CompletionField>(
@@ -340,40 +605,30 @@ extern int vt_rt_resume_global_candidates(
         const bool accept = control(ventus_rt::control_accept_hit) != 0;
         const bool ignore = control(ventus_rt::control_ignore_hit) != 0;
         const bool terminate = control(ventus_rt::control_terminate_ray) != 0;
-        const auto action = ignore || !accept
+        actions.push_back(ignore || !accept
             ? ventus_rt_wavefront::CompletionAction::Ignore
             : terminate ? ventus_rt_wavefront::CompletionAction::AcceptTerminate
-                        : ventus_rt_wavefront::CompletionAction::AcceptContinue;
-        if (!session.consumer.completion_arena().set_action(ray_ref, action))
-            return -1;
+                        : ventus_rt_wavefront::CompletionAction::AcceptContinue);
+    }
+    for (uint32_t i = 0; i < ray_ref_count; ++i) {
+        if (!session->consumer.completion_arena().set_action(ray_refs[i],
+                                                              actions[i]))
+            return fail_rt_global_session(device, out_request_count);
     }
 
     const std::vector<uint32_t> refs(ray_refs, ray_refs + ray_ref_count);
     const std::vector<ventus_rt_wavefront::TraversalDispatchResult> results =
-        session.consumer.resume_candidate_subset(refs);
+        session->consumer.resume_candidate_subset(refs);
     for (const auto &result : results) {
         if (!ventus_rt_wavefront::write_global_completion(
-                session.memory, completion_layout, result,
-                session.consumer.completion_arena()))
-            return -1;
+                session->memory, completion_layout, result,
+                session->consumer.completion_arena()))
+            return fail_rt_global_session(device, out_request_count);
     }
 
-    session.resume_requests.clear();
-    for (const auto &request : session.consumer.resume_requests(results)) {
-        session.resume_requests.push_back({
-            .payload_address = request.payload_address,
-            .ray_ref = request.ray_ref,
-            .completed_stage = static_cast<uint32_t>(request.completed_stage),
-            .callback_group = request.callback_group,
-            .cps_frame = request.cps_frame,
-            .cps_stack_size = request.cps_stack_size,
-            .continuation_id = request.continuation_id,
-            .launch_id_x = request.launch_id_x,
-            .launch_id_y = request.launch_id_y,
-            .launch_id_z = request.launch_id_z,
-        });
-    }
-    *out_request_count = session.resume_requests.size();
+    retain_resume_requests(*session, results);
+    *out_request_count =
+        static_cast<uint32_t>(session->resume_requests.size());
     return 0;
 }
 
@@ -382,59 +637,57 @@ extern int vt_rt_resume_global_intersections(
     const uint32_t *ray_refs, uint32_t ray_ref_count,
     uint32_t *out_request_count)
 {
+    if (out_request_count)
+        *out_request_count = 0;
     if (!hdevice || !info || !ray_refs || !ray_ref_count || !out_request_count ||
         !valid_rt_global_consume_info(*info))
         return -1;
 
     auto *device = static_cast<spike_device *>(hdevice);
     std::lock_guard<std::mutex> lock(rt_global_sessions_mutex);
-    RtGlobalSession &session = get_rt_global_session(*device);
-    const ventus_rt_wavefront::CompletionPlaneLayout completion_layout = {
-        .base_address = info->completion_base,
-        .capacity = info->capacity_rays,
-        .hit_attribute_base_address = info->hit_attribute_base,
-        .hit_attribute_stride_bytes = info->hit_attribute_stride_bytes,
-        .candidate_hit_attribute_base_address =
-            info->candidate_hit_attribute_base,
-        .candidate_hit_attribute_stride_bytes =
-            info->candidate_hit_attribute_stride_bytes,
-        .miss_sbt_base_address = info->miss_sbt_base,
-        .miss_sbt_stride_bytes = info->miss_sbt_stride_bytes,
-        .hit_sbt_base_address = info->hit_sbt_base,
-        .hit_sbt_stride_bytes = info->hit_sbt_stride_bytes,
-    };
+    RtGlobalSession *session = find_rt_global_session(*device);
+    if (!session ||
+        !valid_resume_refs(
+            *session, *info, ray_refs, ray_ref_count,
+            ventus_rt::traversal_candidate_procedural_aabb))
+        return -1;
+    const auto completion_layout = make_completion_layout(*info);
     const auto field = [&](ventus_rt_wavefront::CompletionField word,
                            uint32_t ray_ref) {
-        return session.memory.load_u32(
+        return session->memory.load_u32(
             ventus_rt_wavefront::completion_field_address(completion_layout,
                                                             word, ray_ref));
     };
+    struct ReportedIntersection {
+        uint32_t ray_ref;
+        bool accepted;
+        bool terminate;
+        std::array<uint32_t, ventus_rt_wavefront::kHitRecordWordCount> hit;
+        std::array<uint32_t, ventus_rt_wavefront::kHitAttributeWordCount> attrs;
+    };
+    std::vector<ReportedIntersection> reported;
+    reported.reserve(ray_ref_count);
     std::vector<uint32_t> refs(ray_refs, ray_refs + ray_ref_count);
     for (uint32_t i = 0; i < ray_ref_count; ++i) {
         const uint32_t ray_ref = ray_refs[i];
-        if (ray_ref >= info->capacity_rays)
-            return -1;
-        const bool accepted_report = field(
+        ReportedIntersection report = {};
+        report.ray_ref = ray_ref;
+        report.accepted = field(
             static_cast<ventus_rt_wavefront::CompletionField>(
                 static_cast<uint32_t>(
                     ventus_rt_wavefront::CompletionField::CandidateControlBase) +
                 ventus_rt::control_done), ray_ref) != 0;
-        const bool terminate = field(
+        report.terminate = field(
             static_cast<ventus_rt_wavefront::CompletionField>(
                 static_cast<uint32_t>(
                     ventus_rt_wavefront::CompletionField::CandidateControlBase) +
                 ventus_rt::control_terminate_ray), ray_ref) != 0;
-        if (!accepted_report) {
-            if (!session.consumer.completion_arena().set_action(
-                    ray_ref, ventus_rt_wavefront::CompletionAction::Ignore))
-                return -1;
+        if (!report.accepted) {
+            reported.push_back(report);
             continue;
         }
-
-        std::array<uint32_t, ventus_rt_wavefront::kHitRecordWordCount> hit = {};
-        std::array<uint32_t, ventus_rt_wavefront::kHitAttributeWordCount> attrs = {};
-        for (uint32_t word = 0; word < hit.size(); ++word)
-            hit[word] = field(
+        for (uint32_t word = 0; word < report.hit.size(); ++word)
+            report.hit[word] = field(
                 static_cast<ventus_rt_wavefront::CompletionField>(
                     static_cast<uint32_t>(
                         ventus_rt_wavefront::CompletionField::CommittedHitBase) +
@@ -445,43 +698,43 @@ extern int vt_rt_resume_global_intersections(
             field(ventus_rt_wavefront::CompletionField::CandidateHitAttributeAddrLo,
                   ray_ref);
         if (attrib_addr) {
-            for (uint32_t word = 0; word < attrs.size(); ++word)
-                attrs[word] = session.memory.load_u32(attrib_addr + word * sizeof(uint32_t));
+            for (uint32_t word = 0; word < report.attrs.size(); ++word)
+                report.attrs[word] =
+                    session->memory.load_u32(attrib_addr +
+                                             word * sizeof(uint32_t));
         }
-        if (!session.consumer.completion_arena().replace_candidate(ray_ref, hit, attrs))
-            return -1;
-        if (!session.consumer.completion_arena().set_action(
-                ray_ref, terminate ?
-                   ventus_rt_wavefront::CompletionAction::AcceptTerminate :
-                   ventus_rt_wavefront::CompletionAction::AcceptContinue))
-            return -1;
+        reported.push_back(report);
+    }
+    for (const auto &report : reported) {
+        if (!report.accepted) {
+            if (!session->consumer.completion_arena().set_action(
+                    report.ray_ref,
+                    ventus_rt_wavefront::CompletionAction::Ignore))
+                return fail_rt_global_session(device, out_request_count);
+            continue;
+        }
+        if (!session->consumer.completion_arena().replace_candidate(
+                report.ray_ref, report.hit, report.attrs) ||
+            !session->consumer.completion_arena().set_action(
+                report.ray_ref,
+                report.terminate
+                    ? ventus_rt_wavefront::CompletionAction::AcceptTerminate
+                    : ventus_rt_wavefront::CompletionAction::AcceptContinue))
+            return fail_rt_global_session(device, out_request_count);
     }
 
     const std::vector<ventus_rt_wavefront::TraversalDispatchResult> results =
-        session.consumer.resume_candidate_subset(refs);
+        session->consumer.resume_candidate_subset(refs);
     for (const auto &result : results) {
         if (!ventus_rt_wavefront::write_global_completion(
-                session.memory, completion_layout, result,
-                session.consumer.completion_arena()))
-            return -1;
+                session->memory, completion_layout, result,
+                session->consumer.completion_arena()))
+            return fail_rt_global_session(device, out_request_count);
     }
 
-    session.resume_requests.clear();
-    for (const auto &request : session.consumer.resume_requests(results)) {
-        session.resume_requests.push_back({
-            .payload_address = request.payload_address,
-            .ray_ref = request.ray_ref,
-            .completed_stage = static_cast<uint32_t>(request.completed_stage),
-            .callback_group = request.callback_group,
-            .cps_frame = request.cps_frame,
-            .cps_stack_size = request.cps_stack_size,
-            .continuation_id = request.continuation_id,
-            .launch_id_x = request.launch_id_x,
-            .launch_id_y = request.launch_id_y,
-            .launch_id_z = request.launch_id_z,
-        });
-    }
-    *out_request_count = session.resume_requests.size();
+    retain_resume_requests(*session, results);
+    *out_request_count =
+        static_cast<uint32_t>(session->resume_requests.size());
     return 0;
 }
 extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {

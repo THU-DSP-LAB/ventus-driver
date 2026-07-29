@@ -72,12 +72,20 @@ typedef struct vt_rt_global_consume_info {
     uint32_t reserved;
 } vt_rt_global_consume_info;
 
-/* Completion has selected a miss/closest-hit stage.  The bridge must run that
- * stage, then use continuation_id to select the CPS resume ELF entry. */
+typedef enum vt_rt_completed_stage {
+    VT_RT_COMPLETED_STAGE_MISS = 0,
+    VT_RT_COMPLETED_STAGE_CLOSEST_HIT = 1,
+    VT_RT_COMPLETED_STAGE_ANY_HIT_CANDIDATE = 2,
+    VT_RT_COMPLETED_STAGE_INTERSECTION_CANDIDATE = 3,
+} vt_rt_completed_stage;
+
+/* Traversal has selected a terminal or candidate shader stage.  Candidate
+ * stages must be completed through the matching resume API.  Terminal stages
+ * run the selected shader before continuation_id chooses the CPS resume entry. */
 typedef struct vt_rt_resume_request {
     uint64_t payload_address;
     uint32_t ray_ref;
-    uint32_t completed_stage;
+    uint32_t completed_stage; /* vt_rt_completed_stage */
     uint32_t callback_group;
     uint32_t cps_frame;
     uint32_t cps_stack_size;
