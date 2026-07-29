@@ -59,9 +59,13 @@ typedef struct vt_rt_global_consume_info {
     uint64_t queue_base;
     uint64_t completion_base;
     uint64_t hit_attribute_base;
+    uint64_t miss_sbt_base;
+    uint64_t hit_sbt_base;
     uint32_t capacity_rays;
     uint32_t hit_attribute_stride_bytes;
     uint32_t max_batch_rays;
+    uint64_t miss_sbt_stride_bytes;
+    uint64_t hit_sbt_stride_bytes;
 } vt_rt_global_consume_info;
 
 /* Completion has selected a miss/closest-hit stage.  The bridge must run that
@@ -70,6 +74,7 @@ typedef struct vt_rt_resume_request {
     uint64_t payload_address;
     uint32_t ray_ref;
     uint32_t completed_stage;
+    uint32_t callback_group;
     uint32_t cps_frame;
     uint32_t cps_stack_size;
     uint32_t continuation_id;

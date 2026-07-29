@@ -86,7 +86,9 @@ bool valid_rt_global_consume_info(const vt_rt_global_consume_info &info)
 {
     return info.queue_base != 0 && info.completion_base != 0 &&
            info.hit_attribute_base != 0 && info.capacity_rays != 0 &&
-           info.hit_attribute_stride_bytes >= 2 * sizeof(uint32_t);
+           info.hit_attribute_stride_bytes >= 2 * sizeof(uint32_t) &&
+           info.miss_sbt_base != 0 && info.miss_sbt_stride_bytes != 0 &&
+           info.hit_sbt_base != 0 && info.hit_sbt_stride_bytes != 0;
 }
 
 } // namespace
@@ -235,6 +237,10 @@ extern int vt_rt_consume_global(vt_device_h hdevice,
         .capacity = info->capacity_rays,
         .hit_attribute_base_address = info->hit_attribute_base,
         .hit_attribute_stride_bytes = info->hit_attribute_stride_bytes,
+        .miss_sbt_base_address = info->miss_sbt_base,
+        .miss_sbt_stride_bytes = info->miss_sbt_stride_bytes,
+        .hit_sbt_base_address = info->hit_sbt_base,
+        .hit_sbt_stride_bytes = info->hit_sbt_stride_bytes,
     };
     for (const auto &result : results) {
         if (result.target != ventus_rt_wavefront::TraversalDispatchTarget::Miss &&
@@ -252,6 +258,7 @@ extern int vt_rt_consume_global(vt_device_h hdevice,
             .payload_address = request.payload_address,
             .ray_ref = request.ray_ref,
             .completed_stage = static_cast<uint32_t>(request.completed_stage),
+            .callback_group = request.callback_group,
             .cps_frame = request.cps_frame,
             .cps_stack_size = request.cps_stack_size,
             .continuation_id = request.continuation_id,
