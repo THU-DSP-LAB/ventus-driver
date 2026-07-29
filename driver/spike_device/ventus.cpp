@@ -12,6 +12,12 @@
 #include "ventus.h"
 #include "spike_main.h"
 
+static_assert(sizeof(vt_kernel_metadata_t) == sizeof(meta_data),
+              "Spike metadata ABI must match the driver metadata ABI");
+static_assert(offsetof(vt_kernel_metadata_t, pdsResidentWgCount) ==
+                 offsetof(meta_data, pdsResidentWgCount),
+              "Spike resident-workgroup metadata offset mismatch");
+
 
 /// open the device and connect to it
 extern int vt_dev_open(vt_device_h* hdevice){
