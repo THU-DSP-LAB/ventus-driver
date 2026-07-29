@@ -496,6 +496,50 @@ void check_terminal_miss(DriverFixture &fixture, const TestLayout &layout)
     check_common_request(request);
     assert(request.completed_stage == VT_RT_COMPLETED_STAGE_MISS);
     assert(request.callback_group == 5);
+    assert(vt_rt_end_global(fixture.device(), &info) == 0);
+    assert(vt_rt_get_resume_requests(fixture.device(), nullptr, 0, &count) == -1);
+    assert(count == 0);
+    assert(vt_rt_end_global(fixture.device(), &info) == 0);
+}
+
+void check_session_abort_and_reuse(DriverFixture &fixture,
+                                   const TestLayout &layout)
+{
+    fixture.clear();
+    constexpr uint32_t first_generation = 12;
+    const uint64_t accel = fixture.address(kTriangleSceneOffset);
+    const uint64_t triangles = fixture.address(kTriangleDataOffset);
+    write_triangle_scene(fixture, layout, accel, triangles, false);
+    write_queue(fixture, layout.queue, first_generation,
+                make_trace_record(accel, first_generation));
+    fixture.upload();
+
+    vt_rt_global_consume_info info = make_consume_info(layout);
+    uint32_t count = 0;
+    assert(vt_rt_consume_global(fixture.device(), &info, &count) == 0);
+    assert(count == 1);
+    assert(get_one_request(fixture.device()).completed_stage ==
+           VT_RT_COMPLETED_STAGE_ANY_HIT_CANDIDATE);
+
+    vt_rt_global_consume_info mismatched = info;
+    mismatched.completion_base += 128;
+    assert(vt_rt_end_global(fixture.device(), &mismatched) == -1);
+    assert(get_one_request(fixture.device()).completed_stage ==
+           VT_RT_COMPLETED_STAGE_ANY_HIT_CANDIDATE);
+
+    assert(vt_rt_end_global(fixture.device(), &info) == 0);
+    assert(vt_rt_get_resume_requests(fixture.device(), nullptr, 0, &count) == -1);
+    assert(count == 0);
+
+    constexpr uint32_t second_generation = 13;
+    fixture.clear();
+    write_triangle_scene(fixture, layout, accel, triangles, false);
+    write_queue(fixture, layout.queue, second_generation,
+                make_trace_record(accel, second_generation));
+    fixture.upload();
+    assert(vt_rt_consume_global(fixture.device(), &info, &count) == 0);
+    assert(count == 1);
+    assert(vt_rt_end_global(fixture.device(), &info) == 0);
 }
 
 } // namespace
@@ -505,6 +549,7 @@ int main()
     uint32_t count = 99;
     assert(vt_rt_consume_global(nullptr, nullptr, &count) == -1);
     assert(count == 0);
+    assert(vt_rt_end_global(nullptr, nullptr) == -1);
 
     DriverFixture fixture;
     const TestLayout layout = make_layout(fixture);
@@ -528,5 +573,6 @@ int main()
     check_any_hit_resume(fixture, layout);
     check_intersection_resume(fixture, layout);
     check_terminal_miss(fixture, layout);
+    check_session_abort_and_reuse(fixture, layout);
     return 0;
 }

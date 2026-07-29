@@ -241,6 +241,12 @@ int vt_rt_resume_global_intersections(vt_device_h hdevice,
                                       uint32_t ray_ref_count,
                                       uint32_t *out_request_count);
 
+/* End or abort the global RT session bound to this exact allocation/layout.
+ * A matching active session is destroyed even if traversal is parked; ending
+ * an already absent session is an idempotent success. */
+int vt_rt_end_global(vt_device_h hdevice,
+                     const vt_rt_global_consume_info *info);
+
 /// @brief 【已实现】等待设备执行完成
 /// @param hdevice 指向设备的指针
 /// @param timeout 等待时间，单位为毫秒

@@ -93,11 +93,9 @@ struct RtGlobalSession {
         : memory(device), rtcore_model(), consumer(memory, rtcore_model),
           binding(consume_info), queue_generation(generation) {}
 
-    bool matches(const vt_rt_global_consume_info &info,
-                 uint32_t generation) const
+    bool matches_binding(const vt_rt_global_consume_info &info) const
     {
-        return queue_generation == generation &&
-               binding.queue_base == info.queue_base &&
+        return binding.queue_base == info.queue_base &&
                binding.completion_base == info.completion_base &&
                binding.hit_attribute_base == info.hit_attribute_base &&
                binding.miss_sbt_base == info.miss_sbt_base &&
@@ -111,6 +109,12 @@ struct RtGlobalSession {
                    info.candidate_hit_attribute_base &&
                binding.candidate_hit_attribute_stride_bytes ==
                    info.candidate_hit_attribute_stride_bytes;
+    }
+
+    bool matches(const vt_rt_global_consume_info &info,
+                 uint32_t generation) const
+    {
+        return queue_generation == generation && matches_binding(info);
     }
 
     SpikeDeviceMemory memory;
@@ -737,6 +741,24 @@ extern int vt_rt_resume_global_intersections(
         static_cast<uint32_t>(session->resume_requests.size());
     return 0;
 }
+
+extern int vt_rt_end_global(vt_device_h hdevice,
+                            const vt_rt_global_consume_info *info)
+{
+    if (!hdevice || !info || !valid_rt_global_consume_info(*info))
+        return -1;
+
+    auto *device = static_cast<spike_device *>(hdevice);
+    std::lock_guard<std::mutex> lock(rt_global_sessions_mutex);
+    RtGlobalSession *session = find_rt_global_session(*device);
+    if (!session)
+        return 0;
+    if (!session->matches_binding(*info))
+        return -1;
+    rt_global_sessions.erase(device);
+    return 0;
+}
+
 extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     return 0;
 }
