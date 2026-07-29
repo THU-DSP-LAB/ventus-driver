@@ -65,25 +65,36 @@ public:
 
     uint32_t load_u32(uint64_t address)
     {
+        if (!ok_)
+            return 0;
         uint32_t value = 0;
-        (void)device_.copy_from_dev(address, sizeof(value), &value);
+        if (device_.copy_from_dev(address, sizeof(value), &value) != 0) {
+            ok_ = false;
+            return 0;
+        }
         return value;
     }
 
     void store_u32(uint64_t address, uint32_t value)
     {
-        (void)device_.copy_to_dev(address, sizeof(value), &value);
+        if (!ok_ ||
+            device_.copy_to_dev(address, sizeof(value), &value) != 0)
+            ok_ = false;
     }
 
     uint32_t atomic_fetch_add_u32(uint64_t address, uint32_t value)
     {
         const uint32_t previous = load_u32(address);
-        store_u32(address, previous + value);
+        if (ok_)
+            store_u32(address, previous + value);
         return previous;
     }
 
+    bool ok() const { return ok_; }
+
 private:
     spike_device &device_;
+    bool ok_ = true;
 };
 
 struct RtGlobalSession {
@@ -338,7 +349,7 @@ bool session_binding_is_current(
 {
     const RtQueueHeader header =
         read_queue_header(session.memory, info.queue_base);
-    return valid_queue_header(header, info) &&
+    return session.memory.ok() && valid_queue_header(header, info) &&
            session.matches(info, header.generation);
 }
 
@@ -475,14 +486,14 @@ extern int vt_root_mem_free(vt_device_h hdevice, int taskID) {
 //}
 
 extern int vt_copy_to_dev(vt_device_h hdevice, uint64_t dev_vaddr,const void *src_addr, uint64_t size, uint64_t taskID, uint64_t kernelID) {
-    if(size <= 0)
+    if(size == 0 || hdevice == nullptr || src_addr == nullptr)
         return -1;
     auto device = (spike_device*) hdevice;
     return device->copy_to_dev(dev_vaddr, size, src_addr);
 }
 
 extern int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *dst_addr, uint64_t size, uint64_t taskID, uint64_t kernelID) {
-    if(size <= 0)
+    if(size == 0 || hdevice == nullptr || dst_addr == nullptr)
         return -1;
     auto device = (spike_device*) hdevice;
     return device->copy_from_dev(dev_vaddr, size, dst_addr);
@@ -511,8 +522,8 @@ extern int vt_rt_consume_global(vt_device_h hdevice,
     std::lock_guard<std::mutex> lock(rt_global_sessions_mutex);
     SpikeDeviceMemory probe(*device);
     const RtQueueHeader header = read_queue_header(probe, info->queue_base);
-    if (!valid_queue_header(header, *info) ||
-        !queue_records_are_ready(probe, *info, header))
+    if (!probe.ok() || !valid_queue_header(header, *info) ||
+        !queue_records_are_ready(probe, *info, header) || !probe.ok())
         return -1;
     RtGlobalSession *session =
         bind_rt_global_session(*device, *info, header.generation);
@@ -524,9 +535,11 @@ extern int vt_rt_consume_global(vt_device_h hdevice,
     const std::vector<ventus_rt_wavefront::TraversalDispatchResult> results =
         session->consumer.consume_producer_phase(info->queue_base,
                                                  info->max_batch_rays);
+    if (!session->memory.ok())
+        return fail_rt_global_session(device, out_request_count);
     const RtQueueHeader consumed =
         read_queue_header(session->memory, info->queue_base);
-    if (!valid_queue_header(consumed, *info) ||
+    if (!session->memory.ok() || !valid_queue_header(consumed, *info) ||
         consumed.generation != header.generation ||
         consumed.consume_head != consumed.reserve_tail)
         return fail_rt_global_session(device, out_request_count);
@@ -534,7 +547,8 @@ extern int vt_rt_consume_global(vt_device_h hdevice,
     for (const auto &result : results) {
         if (!ventus_rt_wavefront::write_global_completion(
                 session->memory, completion_layout, result,
-                session->consumer.completion_arena()))
+                session->consumer.completion_arena()) ||
+            !session->memory.ok())
             return fail_rt_global_session(device, out_request_count);
     }
 
@@ -585,11 +599,15 @@ extern int vt_rt_resume_global_candidates(
     auto *device = static_cast<spike_device *>(hdevice);
     std::lock_guard<std::mutex> lock(rt_global_sessions_mutex);
     RtGlobalSession *session = find_rt_global_session(*device);
-    if (!session ||
-        !valid_resume_refs(
-            *session, *info, ray_refs, ray_ref_count,
-            ventus_rt::traversal_candidate_non_opaque_triangle))
+    if (!session)
         return -1;
+    if (!valid_resume_refs(
+            *session, *info, ray_refs, ray_ref_count,
+            ventus_rt::traversal_candidate_non_opaque_triangle)) {
+        return session->memory.ok()
+                   ? -1
+                   : fail_rt_global_session(device, out_request_count);
+    }
     const auto completion_layout = make_completion_layout(*info);
 
     std::vector<ventus_rt_wavefront::CompletionAction> actions;
@@ -614,6 +632,8 @@ extern int vt_rt_resume_global_candidates(
             : terminate ? ventus_rt_wavefront::CompletionAction::AcceptTerminate
                         : ventus_rt_wavefront::CompletionAction::AcceptContinue);
     }
+    if (!session->memory.ok())
+        return fail_rt_global_session(device, out_request_count);
     for (uint32_t i = 0; i < ray_ref_count; ++i) {
         if (!session->consumer.completion_arena().set_action(ray_refs[i],
                                                               actions[i]))
@@ -623,10 +643,13 @@ extern int vt_rt_resume_global_candidates(
     const std::vector<uint32_t> refs(ray_refs, ray_refs + ray_ref_count);
     const std::vector<ventus_rt_wavefront::TraversalDispatchResult> results =
         session->consumer.resume_candidate_subset(refs);
+    if (!session->memory.ok())
+        return fail_rt_global_session(device, out_request_count);
     for (const auto &result : results) {
         if (!ventus_rt_wavefront::write_global_completion(
                 session->memory, completion_layout, result,
-                session->consumer.completion_arena()))
+                session->consumer.completion_arena()) ||
+            !session->memory.ok())
             return fail_rt_global_session(device, out_request_count);
     }
 
@@ -650,11 +673,15 @@ extern int vt_rt_resume_global_intersections(
     auto *device = static_cast<spike_device *>(hdevice);
     std::lock_guard<std::mutex> lock(rt_global_sessions_mutex);
     RtGlobalSession *session = find_rt_global_session(*device);
-    if (!session ||
-        !valid_resume_refs(
-            *session, *info, ray_refs, ray_ref_count,
-            ventus_rt::traversal_candidate_procedural_aabb))
+    if (!session)
         return -1;
+    if (!valid_resume_refs(
+            *session, *info, ray_refs, ray_ref_count,
+            ventus_rt::traversal_candidate_procedural_aabb)) {
+        return session->memory.ok()
+                   ? -1
+                   : fail_rt_global_session(device, out_request_count);
+    }
     const auto completion_layout = make_completion_layout(*info);
     const auto field = [&](ventus_rt_wavefront::CompletionField word,
                            uint32_t ray_ref) {
@@ -709,6 +736,8 @@ extern int vt_rt_resume_global_intersections(
         }
         reported.push_back(report);
     }
+    if (!session->memory.ok())
+        return fail_rt_global_session(device, out_request_count);
     for (const auto &report : reported) {
         if (!report.accepted) {
             if (!session->consumer.completion_arena().set_action(
@@ -729,10 +758,13 @@ extern int vt_rt_resume_global_intersections(
 
     const std::vector<ventus_rt_wavefront::TraversalDispatchResult> results =
         session->consumer.resume_candidate_subset(refs);
+    if (!session->memory.ok())
+        return fail_rt_global_session(device, out_request_count);
     for (const auto &result : results) {
         if (!ventus_rt_wavefront::write_global_completion(
                 session->memory, completion_layout, result,
-                session->consumer.completion_arena()))
+                session->consumer.completion_arena()) ||
+            !session->memory.ok())
             return fail_rt_global_session(device, out_request_count);
     }
 

@@ -542,6 +542,72 @@ void check_session_abort_and_reuse(DriverFixture &fixture,
     assert(vt_rt_end_global(fixture.device(), &info) == 0);
 }
 
+void check_device_copy_failures(DriverFixture &fixture)
+{
+    const uint32_t source = 0x12345678;
+    uint32_t destination = 0xa5a5a5a5;
+    const uint64_t unmapped = fixture.address(kAllocationSize + 0x1000);
+    assert(vt_copy_to_dev(fixture.device(), unmapped, &source, sizeof(source),
+                          0, 0) == -1);
+    assert(vt_copy_from_dev(fixture.device(), unmapped, &destination,
+                            sizeof(destination), 0, 0) == -1);
+    assert(destination == 0xa5a5a5a5);
+
+    const uint64_t crossing = fixture.address(kAllocationSize - 2);
+    assert(vt_copy_to_dev(fixture.device(), crossing, &source, sizeof(source),
+                          0, 0) == -1);
+    assert(vt_copy_from_dev(fixture.device(), crossing, &destination,
+                            sizeof(destination), 0, 0) == -1);
+    assert(vt_copy_to_dev(fixture.device(), UINT64_MAX - 1, &source,
+                          sizeof(source), 0, 0) == -1);
+    assert(vt_copy_from_dev(fixture.device(), UINT64_MAX - 1, &destination,
+                            sizeof(destination), 0, 0) == -1);
+    assert(vt_copy_to_dev(fixture.device(), fixture.address(0), nullptr,
+                          sizeof(source), 0, 0) == -1);
+    assert(vt_copy_from_dev(fixture.device(), fixture.address(0), nullptr,
+                            sizeof(destination), 0, 0) == -1);
+}
+
+void check_invalid_rt_data_addresses(DriverFixture &fixture,
+                                     const TestLayout &layout)
+{
+    uint32_t count = 99;
+    vt_rt_global_consume_info info = make_consume_info(layout);
+
+    fixture.clear();
+    constexpr uint32_t invalid_as_generation = 14;
+    write_queue(
+        fixture, layout.queue, invalid_as_generation,
+        make_trace_record(fixture.address(kAllocationSize + 0x1000),
+                          invalid_as_generation));
+    fixture.upload();
+    assert(vt_rt_consume_global(fixture.device(), &info, &count) == -1);
+    assert(count == 0);
+    assert(vt_rt_get_resume_requests(fixture.device(), nullptr, 0, &count) == -1);
+
+    fixture.clear();
+    constexpr uint32_t invalid_sbt_generation = 15;
+    write_queue(fixture, layout.queue, invalid_sbt_generation,
+                make_trace_record(0, invalid_sbt_generation));
+    fixture.upload();
+    info = make_consume_info(layout);
+    info.miss_sbt_base = fixture.address(kAllocationSize + 0x2000);
+    assert(vt_rt_consume_global(fixture.device(), &info, &count) == -1);
+    assert(count == 0);
+    assert(vt_rt_get_resume_requests(fixture.device(), nullptr, 0, &count) == -1);
+
+    fixture.clear();
+    constexpr uint32_t invalid_completion_generation = 16;
+    write_queue(fixture, layout.queue, invalid_completion_generation,
+                make_trace_record(0, invalid_completion_generation));
+    fixture.upload();
+    info = make_consume_info(layout);
+    info.completion_base = fixture.address(kAllocationSize + 0x3000);
+    assert(vt_rt_consume_global(fixture.device(), &info, &count) == -1);
+    assert(count == 0);
+    assert(vt_rt_get_resume_requests(fixture.device(), nullptr, 0, &count) == -1);
+}
+
 } // namespace
 
 int main()
@@ -570,9 +636,11 @@ int main()
     invalid.completion_base = invalid.queue_base;
     assert(vt_rt_consume_global(fixture.device(), &invalid, &count) == -1);
 
+    check_device_copy_failures(fixture);
     check_any_hit_resume(fixture, layout);
     check_intersection_resume(fixture, layout);
     check_terminal_miss(fixture, layout);
     check_session_abort_and_reuse(fixture, layout);
+    check_invalid_rt_data_addresses(fixture, layout);
     return 0;
 }
