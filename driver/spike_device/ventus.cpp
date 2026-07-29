@@ -9,14 +9,87 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
 #include "ventus.h"
 #include "spike_main.h"
+#include "ventus_rt_wavefront_worker.h"
 
 static_assert(sizeof(vt_kernel_metadata_t) == sizeof(meta_data),
               "Spike metadata ABI must match the driver metadata ABI");
 static_assert(offsetof(vt_kernel_metadata_t, pdsResidentWgCount) ==
                  offsetof(meta_data, pdsResidentWgCount),
               "Spike resident-workgroup metadata offset mismatch");
+
+namespace {
+
+/* The worker only needs u32 global operations.  Keep this adapter on the
+ * public spike_device copy API so the driver does not reach into sim/MMU
+ * internals or accidentally apply a PDS address transform. */
+class SpikeDeviceMemory {
+public:
+    explicit SpikeDeviceMemory(spike_device &device) : device_(device) {}
+
+    uint32_t load_u32(uint64_t address)
+    {
+        uint32_t value = 0;
+        (void)device_.copy_from_dev(address, sizeof(value), &value);
+        return value;
+    }
+
+    void store_u32(uint64_t address, uint32_t value)
+    {
+        (void)device_.copy_to_dev(address, sizeof(value), &value);
+    }
+
+    uint32_t atomic_fetch_add_u32(uint64_t address, uint32_t value)
+    {
+        const uint32_t previous = load_u32(address);
+        store_u32(address, previous + value);
+        return previous;
+    }
+
+private:
+    spike_device &device_;
+};
+
+struct RtGlobalSession {
+    explicit RtGlobalSession(spike_device &device)
+        : memory(device), consumer(memory) {}
+
+    SpikeDeviceMemory memory;
+    ventus_rt_wavefront::GlobalWavefrontConsumer<SpikeDeviceMemory> consumer;
+    std::vector<vt_rt_resume_request> resume_requests;
+};
+
+std::mutex rt_global_sessions_mutex;
+std::unordered_map<spike_device *, std::unique_ptr<RtGlobalSession>>
+    rt_global_sessions;
+
+RtGlobalSession &get_rt_global_session(spike_device &device)
+{
+    auto &session = rt_global_sessions[&device];
+    if (!session)
+        session = std::make_unique<RtGlobalSession>(device);
+    return *session;
+}
+
+void erase_rt_global_session(spike_device *device)
+{
+    std::lock_guard<std::mutex> lock(rt_global_sessions_mutex);
+    rt_global_sessions.erase(device);
+}
+
+bool valid_rt_global_consume_info(const vt_rt_global_consume_info &info)
+{
+    return info.queue_base != 0 && info.completion_base != 0 &&
+           info.hit_attribute_base != 0 && info.capacity_rays != 0 &&
+           info.hit_attribute_stride_bytes >= 2 * sizeof(uint32_t);
+}
+
+} // namespace
 
 
 /// open the device and connect to it
@@ -32,6 +105,7 @@ extern int vt_dev_close(vt_device_h hdevice){
     if(hdevice == nullptr)
         return -1;
     auto* device = (spike_device*) hdevice;
+    erase_rt_global_session(device);
     delete device;
     return 0;
 }
@@ -134,6 +208,81 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t* metaData, uint64_
     auto device = (spike_device *) hdevice;
 
     device->run(reinterpret_cast<meta_data*>(metaData),0x80000000);
+    return 0;
+}
+
+extern int vt_rt_consume_global(vt_device_h hdevice,
+                                const vt_rt_global_consume_info *info,
+                                uint32_t *out_request_count)
+{
+    if (!hdevice || !info || !out_request_count ||
+        !valid_rt_global_consume_info(*info))
+        return -1;
+
+    auto *device = static_cast<spike_device *>(hdevice);
+    std::lock_guard<std::mutex> lock(rt_global_sessions_mutex);
+    RtGlobalSession &session = get_rt_global_session(*device);
+    if (session.memory.load_u32(info->queue_base +
+                                ventus_rt_wavefront::kQueueCapacityWord *
+                                    sizeof(uint32_t)) != info->capacity_rays)
+        return -1;
+
+    const std::vector<ventus_rt_wavefront::TraversalDispatchResult> results =
+        session.consumer.consume_producer_phase(info->queue_base,
+                                                info->max_batch_rays);
+    const ventus_rt_wavefront::CompletionPlaneLayout completion_layout = {
+        .base_address = info->completion_base,
+        .capacity = info->capacity_rays,
+        .hit_attribute_base_address = info->hit_attribute_base,
+        .hit_attribute_stride_bytes = info->hit_attribute_stride_bytes,
+    };
+    for (const auto &result : results) {
+        if (result.target != ventus_rt_wavefront::TraversalDispatchTarget::Miss &&
+            result.target != ventus_rt_wavefront::TraversalDispatchTarget::ClosestHit)
+            continue;
+        if (!ventus_rt_wavefront::write_global_completion(
+                session.memory, completion_layout, result,
+                session.consumer.completion_arena()))
+            return -1;
+    }
+
+    session.resume_requests.clear();
+    for (const auto &request : session.consumer.resume_requests(results)) {
+        session.resume_requests.push_back({
+            .payload_address = request.payload_address,
+            .ray_ref = request.ray_ref,
+            .completed_stage = static_cast<uint32_t>(request.completed_stage),
+            .cps_frame = request.cps_frame,
+            .cps_stack_size = request.cps_stack_size,
+            .continuation_id = request.continuation_id,
+            .launch_id_x = request.launch_id_x,
+            .launch_id_y = request.launch_id_y,
+            .launch_id_z = request.launch_id_z,
+        });
+    }
+    *out_request_count = session.resume_requests.size();
+    return 0;
+}
+
+extern int vt_rt_get_resume_requests(vt_device_h hdevice,
+                                     vt_rt_resume_request *requests,
+                                     uint32_t capacity,
+                                     uint32_t *out_request_count)
+{
+    if (!hdevice || !out_request_count)
+        return -1;
+
+    auto *device = static_cast<spike_device *>(hdevice);
+    std::lock_guard<std::mutex> lock(rt_global_sessions_mutex);
+    RtGlobalSession &session = get_rt_global_session(*device);
+    const uint32_t count = session.resume_requests.size();
+    *out_request_count = count;
+    if (!requests && capacity == 0)
+        return 0;
+    if (!requests || capacity < count)
+        return -2;
+    for (uint32_t i = 0; i < count; ++i)
+        requests[i] = session.resume_requests[i];
     return 0;
 }
 extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
