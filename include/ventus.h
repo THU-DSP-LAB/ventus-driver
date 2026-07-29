@@ -52,8 +52,9 @@ typedef struct vt_kernel_metadata_t {  // 这个metadata是供驱动使用的，
 
 /*
  * Host-only handoff for the PDS-free RT wavefront worker.  The caller owns
- * all device allocations.  `hit_attribute_base` addresses a two-u32-per-ray
- * arena; payload itself is never copied or synthesized by this API.
+ * all device allocations.  Committed and candidate attributes use distinct
+ * ray_ref-indexed arenas; payload itself is never copied or synthesized by
+ * this API.
  */
 typedef struct vt_rt_global_consume_info {
     uint64_t queue_base;
@@ -66,6 +67,9 @@ typedef struct vt_rt_global_consume_info {
     uint32_t max_batch_rays;
     uint64_t miss_sbt_stride_bytes;
     uint64_t hit_sbt_stride_bytes;
+    uint64_t candidate_hit_attribute_base;
+    uint32_t candidate_hit_attribute_stride_bytes;
+    uint32_t reserved;
 } vt_rt_global_consume_info;
 
 /* Completion has selected a miss/closest-hit stage.  The bridge must run that
@@ -210,6 +214,24 @@ int vt_rt_get_resume_requests(vt_device_h hdevice,
                               vt_rt_resume_request *requests,
                               uint32_t capacity,
                               uint32_t *out_request_count);
+
+/* Consume any-hit decisions published in the candidate completion planes and
+ * resume the same RTcore-private traversal contexts.  Results replace the
+ * retained request list and may contain another candidate or a terminal ray. */
+int vt_rt_resume_global_candidates(vt_device_h hdevice,
+                                   const vt_rt_global_consume_info *info,
+                                   const uint32_t *ray_refs,
+                                   uint32_t ray_ref_count,
+                                   uint32_t *out_request_count);
+
+/* A completed procedural callback has already evaluated every report site
+ * (including its inlined any-hit).  Consume its final ray_ref-indexed
+ * committed record and resume the parked RTcore traversal exactly once. */
+int vt_rt_resume_global_intersections(vt_device_h hdevice,
+                                      const vt_rt_global_consume_info *info,
+                                      const uint32_t *ray_refs,
+                                      uint32_t ray_ref_count,
+                                      uint32_t *out_request_count);
 
 /// @brief 【已实现】等待设备执行完成
 /// @param hdevice 指向设备的指针
