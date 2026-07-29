@@ -10,6 +10,7 @@
 #include "rtl_buffer_allocator.hpp"
 #include "rtl_persistent_state.hpp"
 #include "rtl_state_contract.hpp"
+#include "rtlsim_wait_deadline.hpp"
 #include "rtlsim_backend_loader.hpp"
 #include "rtlsim_watchdog.hpp"
 #include "utils.hpp"
@@ -641,13 +642,19 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
 extern int vt_ready_wait(vt_device_h hdevice, uint64_t timeout) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
-    uint64_t timeout_ns = timeout * 1000000;
-    while (!rtl().is_idle(device) && rtl().get_time(device) < timeout_ns) {
+    const uint64_t start_time = rtl().get_time(device);
+    const uint64_t deadline =
+        ventus::rtlsim_wait::deadline(start_time, timeout);
+    while (!rtl().is_idle(device) && rtl().get_time(device) < deadline) {
         const ventus_rtlsim_step_result_t *result = rtl().step(device);
         if (ventus::rtlsim_watchdog::check_step_result(rtl(), device, result, "kernel execution", logger) != 0) return -1;
     }
     if (!rtl().is_idle(device)) {
-        SPDLOG_LOGGER_ERROR(logger, "rtlsim wait timeout, time={}, timeout={}", rtl().get_time(device), timeout_ns);
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "rtlsim wait timeout, time={}, start={}, deadline={}, timeout_ms={}",
+            rtl().get_time(device), start_time, deadline, timeout
+        );
         return -1;
     }
     for (int i = 0; i < ventus::rtlsim_watchdog::FLUSH_TAIL_STEPS; i++) {

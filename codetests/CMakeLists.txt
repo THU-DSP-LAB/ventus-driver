@@ -20,6 +20,12 @@ add_test(NAME rtl_buffer_allocator COMMAND test_rtl_buffer_allocator)
 add_executable(test_rtl_state_contract test_rtl_state_contract.cpp)
 add_test(NAME rtl_state_contract COMMAND test_rtl_state_contract)
 
+add_executable(test_rtlsim_wait_deadline test_rtlsim_wait_deadline.cpp)
+target_include_directories(
+    test_rtlsim_wait_deadline PRIVATE ../driver/rtlsim_device
+)
+add_test(NAME rtlsim_wait_deadline COMMAND test_rtlsim_wait_deadline)
+
 add_executable(
     test_rtl_persistent_state
     test_rtl_persistent_state.cpp
