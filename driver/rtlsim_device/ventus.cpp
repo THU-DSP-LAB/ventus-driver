@@ -289,11 +289,13 @@ extern int vt_dev_open(vt_device_h *hdevice) {
         );
         return -1;
     }
-    if ((g_persistent_state.capture_enabled() || g_persistent_state.restoring())
-        && (config.waveform.enable || config.snapshot.enable)) {
+    if ((g_persistent_state.capture_enabled()
+         && (config.waveform.enable || config.snapshot.enable))
+        || (g_persistent_state.restoring() && config.snapshot.enable)) {
         fmt::print(
             stderr,
-            "persistent RTL state cannot be combined with waveform or fork snapshot\n"
+            "persistent RTL state capture cannot be combined with waveform or fork snapshot; "
+            "restore cannot be combined with fork snapshot\n"
         );
         return -1;
     }
