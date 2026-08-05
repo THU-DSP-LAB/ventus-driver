@@ -327,23 +327,16 @@ extern int vt_rt_resume_global_candidates(
         const uint32_t ray_ref = ray_refs[i];
         if (ray_ref >= info->capacity_rays)
             return -1;
-        const auto control = [&](uint32_t word) {
-            return session.memory.load_u32(
-                ventus_rt_wavefront::completion_field_address(
-                    completion_layout,
-                    static_cast<ventus_rt_wavefront::CompletionField>(
-                        static_cast<uint32_t>(
-                            ventus_rt_wavefront::CompletionField::CandidateControlBase) +
-                        word),
-                    ray_ref));
-        };
-        const bool accept = control(ventus_rt::control_accept_hit) != 0;
-        const bool ignore = control(ventus_rt::control_ignore_hit) != 0;
-        const bool terminate = control(ventus_rt::control_terminate_ray) != 0;
-        const auto action = ignore || !accept
-            ? ventus_rt_wavefront::CompletionAction::Ignore
-            : terminate ? ventus_rt_wavefront::CompletionAction::AcceptTerminate
-                        : ventus_rt_wavefront::CompletionAction::AcceptContinue;
+        const uint32_t callback = session.memory.load_u32(
+            ventus_rt_wavefront::completion_field_address(
+                completion_layout,
+                ventus_rt_wavefront::CompletionField::CandidateControlBase,
+                ray_ref));
+        const auto action = callback == ventus_rt::callback_accept
+            ? ventus_rt_wavefront::CompletionAction::AcceptContinue
+            : callback == ventus_rt::callback_terminate
+                ? ventus_rt_wavefront::CompletionAction::AcceptTerminate
+                : ventus_rt_wavefront::CompletionAction::Ignore;
         if (!session.consumer.completion_arena().set_action(ray_ref, action))
             return -1;
     }
@@ -414,16 +407,12 @@ extern int vt_rt_resume_global_intersections(
         const uint32_t ray_ref = ray_refs[i];
         if (ray_ref >= info->capacity_rays)
             return -1;
-        const bool accepted_report = field(
-            static_cast<ventus_rt_wavefront::CompletionField>(
-                static_cast<uint32_t>(
-                    ventus_rt_wavefront::CompletionField::CandidateControlBase) +
-                ventus_rt::control_done), ray_ref) != 0;
-        const bool terminate = field(
-            static_cast<ventus_rt_wavefront::CompletionField>(
-                static_cast<uint32_t>(
-                    ventus_rt_wavefront::CompletionField::CandidateControlBase) +
-                ventus_rt::control_terminate_ray), ray_ref) != 0;
+        const uint32_t callback = field(
+            ventus_rt_wavefront::CompletionField::CandidateControlBase,
+            ray_ref);
+        const bool accepted_report = callback == ventus_rt::callback_accept ||
+                                     callback == ventus_rt::callback_terminate;
+        const bool terminate = callback == ventus_rt::callback_terminate;
         if (!accepted_report) {
             if (!session.consumer.completion_arena().set_action(
                     ray_ref, ventus_rt_wavefront::CompletionAction::Ignore))
