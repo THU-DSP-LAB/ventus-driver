@@ -47,24 +47,28 @@ int main() {
         after_reuse[0].sequence < after_reuse[1].sequence,
         "reused allocation sequence is not monotonic");
 
+    const auto captured_state = allocator.snapshot();
     RtlBufferAllocator restored;
     require(
-        restored.restore_allocations(active),
-        "active allocation replay was rejected");
+        restored.restore_state(captured_state),
+        "allocator state restore was rejected");
     const auto replayed = restored.active_allocations();
-    require(replayed.size() == active.size(), "allocation replay count changed");
+    require(replayed.size() == after_reuse.size(), "allocation restore count changed");
     require(
-        replayed[0].address == active[0].address
-            && replayed[1].address == active[1].address,
-        "allocation replay changed an address");
-    auto invalid = active;
-    invalid[1].address += RtlBufferAllocator::kPageSize;
+        replayed[0].address == after_reuse[0].address
+            && replayed[1].address == after_reuse[1].address,
+        "allocator restore changed an address");
     require(
-        !restored.restore_allocations(invalid),
-        "allocation replay accepted a wrong address");
+        allocator.alloc(16384) == restored.alloc(16384),
+        "restored free-list order changed a subsequent address");
+    auto invalid = captured_state;
+    invalid.allocations[1].address += RtlBufferAllocator::kPageSize;
+    require(
+        !restored.restore_state(invalid),
+        "allocator restore accepted a wrong address");
     require(
         restored.active_allocations().empty(),
-        "failed allocation replay retained reservations");
+        "failed allocator restore retained reservations");
 
     allocator.reset();
     require(allocator.active_allocations().empty(), "reset retained allocations");

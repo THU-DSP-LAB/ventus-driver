@@ -33,6 +33,7 @@ int main() {
     require(
         capture.record_free(0x90000000, 64, error),
         "capture free failed");
+    require(capture.next_sequence() == 2, "capture next sequence changed");
     const auto expected = capture.active_allocations();
     require(expected.size() == 1, "capture active contract has the wrong size");
     ventus::rtl_state::AllocationRecord active;
@@ -45,7 +46,9 @@ int main() {
         "freed allocation remained discoverable");
 
     AllocationContract restore;
-    require(restore.begin_restore(expected, error), "restore contract was rejected");
+    require(
+        restore.begin_restore(expected, capture.next_sequence(), error),
+        "restore contract was rejected");
     require(restore.compare_only(), "restore did not enter compare-only mode");
     require(
         !restore.record_alloc(0x90001000, 127, 4096, 1, 0, 0, error),
@@ -77,35 +80,27 @@ int main() {
         !incomplete.record_free(0x90000000, 64, error),
         "free was accepted during compare-only rebind");
 
-    AllocationContract lazy;
-    const std::vector<ventus::rtl_state::AllocationRecord> lazy_expected = {
+    AllocationContract reordered;
+    const std::vector<ventus::rtl_state::AllocationRecord> reordered_expected = {
         allocation(0x90000000, 64, 0),
         allocation(0x90001000, 128, 1),
         allocation(0x90002000, 256, 2),
     };
     require(
-        lazy.begin_restore(lazy_expected, error),
-        "lazy restore contract was rejected");
+        reordered.begin_restore(reordered_expected, error),
+        "reordered restore contract was rejected");
     ventus::rtl_state::AllocationRecord claimed;
     require(
-        lazy.claim_restore_allocation(64, 0, 0, 0, claimed, error)
+        reordered.claim_restore_allocation(64, 0, 0, 0, claimed, error)
             && claimed.address == 0x90000000,
-        "first lazy allocation claim failed");
+        "first reordered allocation claim failed");
     require(
-        lazy.claim_restore_allocation(256, 0, 0, 0, claimed, error)
+        reordered.claim_restore_allocation(256, 0, 0, 0, claimed, error)
             && claimed.address == 0x90002000,
-        "out-of-order lazy allocation claim failed");
-    require(lazy.dormant_count() == 1, "lazy restore dormant count is wrong");
+        "out-of-order allocation claim failed");
     require(
-        !lazy.finish_rebind(error),
-        "strict rebind accepted a dormant allocation");
-    require(
-        lazy.finish_rebind_with_dormant(error),
-        "lazy rebind rejected a reserved dormant allocation");
-    require(lazy.rebound(), "lazy restore did not leave compare-only mode");
-    require(
-        lazy.active_allocations().size() == lazy_expected.size(),
-        "lazy restore dropped a dormant allocation");
+        !reordered.finish_rebind(error),
+        "strict rebind accepted an unbound allocation");
 
     std::cout << "rtl state contract tests passed\n";
     return 0;

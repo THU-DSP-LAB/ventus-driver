@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <string>
@@ -34,6 +35,21 @@ public:
 
     bool begin_restore(
         const std::vector<AllocationRecord>& expected, std::string& error) {
+        if (!expected.empty()
+            && expected.back().sequence
+                == std::numeric_limits<uint64_t>::max()) {
+            error = "invalid persistent allocation sequence";
+            reset();
+            return false;
+        }
+        const uint64_t next_sequence = expected.empty()
+            ? 0 : expected.back().sequence + 1;
+        return begin_restore(expected, next_sequence, error);
+    }
+
+    bool begin_restore(
+        const std::vector<AllocationRecord>& expected,
+        uint64_t next_sequence, std::string& error) {
         reset();
         uint64_t previous_sequence = 0;
         bool first = true;
@@ -42,6 +58,7 @@ public:
             if (record.address == 0 || record.requested_size == 0
                 || record.allocated_size < record.requested_size
                 || (!first && record.sequence <= previous_sequence)
+                || record.sequence >= next_sequence
                 || !addresses.emplace(record.address, true).second) {
                 error = "invalid persistent allocation contract";
                 reset();
@@ -56,7 +73,7 @@ public:
         for (const auto& record : expected_) {
             active_.emplace(record.address, record);
         }
-        next_sequence_ = expected.empty() ? 0 : expected.back().sequence + 1;
+        next_sequence_ = next_sequence;
         return true;
     }
 
@@ -157,25 +174,12 @@ public:
         return true;
     }
 
-    bool finish_rebind_with_dormant(std::string& error) {
-        if (!restoring_ || rebound_) {
-            error = "persistent rebind is not active";
-            return false;
-        }
-        if (bound_count_ == 0) {
-            error = "persistent rebind did not bind any allocations";
-            return false;
-        }
-        rebound_ = true;
-        return true;
-    }
-
     bool restoring() const { return restoring_; }
     bool rebound() const { return rebound_; }
     bool compare_only() const { return restoring_ && !rebound_; }
     size_t expected_cursor() const { return bound_count_; }
     size_t expected_count() const { return expected_.size(); }
-    size_t dormant_count() const { return expected_.size() - bound_count_; }
+    uint64_t next_sequence() const { return next_sequence_; }
 
     std::vector<AllocationRecord> active_allocations() const {
         std::vector<AllocationRecord> result;

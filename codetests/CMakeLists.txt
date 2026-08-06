@@ -4,9 +4,6 @@ project(codetests)
 set(CMAKE_CXX_FLAGS "-std=c++11 -Wall -Wextra -Wfatal-errors -Wno-array-bounds -fPIC -Wno-maybe-uninitialized"
         )
 
-find_package(nlohmann_json CONFIG REQUIRED)
-find_package(OpenSSL REQUIRED)
-
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../common)
 
@@ -27,16 +24,12 @@ target_include_directories(
 add_test(NAME rtlsim_wait_deadline COMMAND test_rtlsim_wait_deadline)
 
 add_executable(
-    test_rtl_persistent_state
-    test_rtl_persistent_state.cpp
-    ../driver/rtlsim_device/rtl_persistent_state.cpp
+    test_rtl_raw_state
+    test_rtl_raw_state.cpp
+    ../driver/rtlsim_device/rtl_raw_state.cpp
 )
 target_include_directories(
-    test_rtl_persistent_state PRIVATE ../driver/rtlsim_device
+    test_rtl_raw_state PRIVATE ../driver/rtlsim_device
 )
-target_compile_features(test_rtl_persistent_state PRIVATE cxx_std_17)
-target_link_libraries(
-    test_rtl_persistent_state
-    PRIVATE nlohmann_json::nlohmann_json OpenSSL::Crypto
-)
-add_test(NAME rtl_persistent_state COMMAND test_rtl_persistent_state)
+target_compile_features(test_rtl_raw_state PRIVATE cxx_std_17)
+add_test(NAME rtl_raw_state COMMAND test_rtl_raw_state)
