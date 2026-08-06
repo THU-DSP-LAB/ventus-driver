@@ -189,6 +189,13 @@ public:
         return result;
     }
 
+    bool find_allocation(uint64_t address, AllocationRecord& allocation) const {
+        const auto found = active_.find(address);
+        if (found == active_.end()) return false;
+        allocation = found->second;
+        return true;
+    }
+
 private:
     static bool same_request(
         const AllocationRecord& lhs, const AllocationRecord& rhs) {

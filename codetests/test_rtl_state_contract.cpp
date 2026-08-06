@@ -35,6 +35,14 @@ int main() {
         "capture free failed");
     const auto expected = capture.active_allocations();
     require(expected.size() == 1, "capture active contract has the wrong size");
+    ventus::rtl_state::AllocationRecord active;
+    require(
+        capture.find_allocation(0x90001000, active),
+        "active allocation lookup failed");
+    require(active.sequence == expected[0].sequence, "active allocation lookup changed identity");
+    require(
+        !capture.find_allocation(0x90000000, active),
+        "freed allocation remained discoverable");
 
     AllocationContract restore;
     require(restore.begin_restore(expected, error), "restore contract was rejected");

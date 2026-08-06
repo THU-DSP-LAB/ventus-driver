@@ -46,6 +46,14 @@ struct Api {
     ) = nullptr;
     bool (*pmemcpy_h2d)(ventus_rtlsim_t *, paddr_t, const void *, uint64_t) = nullptr;
     bool (*pmemcpy_d2h)(ventus_rtlsim_t *, void *, paddr_t, uint64_t) = nullptr;
+    bool (*pmem_region_register)(
+        ventus_rtlsim_t *, paddr_t, uint64_t, uint64_t,
+        ventus_pmem_region_kind_t, uint64_t
+    ) = nullptr;
+    bool (*pmem_region_unregister)(ventus_rtlsim_t *, paddr_t, uint64_t) = nullptr;
+    ventus_pmem_missing_read_stats_t (*pmem_missing_read_stats)(
+        const ventus_rtlsim_t *
+    ) = nullptr;
     int (*fw_vt_dev_open)() = nullptr;
     int (*fw_vt_dev_close)() = nullptr;
     int (*fw_vt_buf_alloc_fixed)(uint64_t, uint64_t, int, uint64_t, uint64_t) = nullptr;
@@ -196,6 +204,19 @@ inline Api open_library(std::string_view soname, FirmwareApiRequirement firmware
     );
     api.pmemcpy_d2h = load_symbol<bool (*)(ventus_rtlsim_t *, void *, paddr_t, uint64_t)>(
         handle, "ventus_rtlsim_pmemcpy_d2h"
+    );
+    api.pmem_region_register = load_optional_symbol<
+        bool (*)(ventus_rtlsim_t *, paddr_t, uint64_t, uint64_t,
+                 ventus_pmem_region_kind_t, uint64_t)>(
+        handle, "ventus_rtlsim_pmem_region_register"
+    );
+    api.pmem_region_unregister = load_optional_symbol<
+        bool (*)(ventus_rtlsim_t *, paddr_t, uint64_t)>(
+        handle, "ventus_rtlsim_pmem_region_unregister"
+    );
+    api.pmem_missing_read_stats = load_optional_symbol<
+        ventus_pmem_missing_read_stats_t (*)(const ventus_rtlsim_t *)>(
+        handle, "ventus_rtlsim_pmem_missing_read_stats"
     );
     if (firmware_api == FirmwareApiRequirement::required) {
         load_firmware_symbols(api, handle);

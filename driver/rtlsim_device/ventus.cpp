@@ -81,6 +81,42 @@ const ventus::rtlsim_backend::Api &rtl() {
     return api;
 }
 
+bool pmem_region_api_consistent() {
+    return (rtl().pmem_region_register == nullptr)
+        == (rtl().pmem_region_unregister == nullptr);
+}
+
+ventus_pmem_region_kind_t pmem_region_kind(int buffer_type) {
+    return buffer_type == VT_BUFFER_TYPE_PDS
+        ? VENTUS_PMEM_REGION_PDS
+        : VENTUS_PMEM_REGION_BUFFER;
+}
+
+bool register_pmem_region(
+    ventus_rtlsim_t *device,
+    const ventus::rtl_state::AllocationRecord &allocation
+) {
+    if (rtl().pmem_region_register == nullptr) return true;
+    return rtl().pmem_region_register(
+        device,
+        allocation.address,
+        allocation.requested_size,
+        allocation.allocated_size,
+        pmem_region_kind(allocation.buffer_type),
+        allocation.sequence
+    );
+}
+
+bool unregister_pmem_region(
+    ventus_rtlsim_t *device,
+    const ventus::rtl_state::AllocationRecord &allocation
+) {
+    if (rtl().pmem_region_unregister == nullptr) return true;
+    return rtl().pmem_region_unregister(
+        device, allocation.address, allocation.sequence
+    );
+}
+
 bool parse_env_bool(const char *name, bool default_value, bool &value) {
     const char *raw = std::getenv(name);
     if (raw == nullptr) {
@@ -309,6 +345,15 @@ extern int vt_dev_open(vt_device_h *hdevice) {
         fmt::print(stderr, "Ventus RTL simulator init/restore failed\n");
         return -1;
     }
+    if (!pmem_region_api_consistent()) {
+        fmt::print(stderr, "RTLSIM PMEM region API is incomplete\n");
+        if (rtl().finish_checked != nullptr) {
+            rtl().finish_checked(device, false);
+        } else {
+            rtl().finish(device, false);
+        }
+        return -1;
+    }
     if (g_persistent_state.restoring()
         && !g_allocation_contract.begin_restore(
             g_persistent_state.expected_allocations(), persistent_error
@@ -340,6 +385,21 @@ extern int vt_dev_open(vt_device_h *hdevice) {
                 rtl().finish(device, false);
             }
             return -1;
+        }
+        for (const auto &record : g_persistent_state.expected_allocations()) {
+            if (!register_pmem_region(device, record)) {
+                fmt::print(
+                    stderr,
+                    "persistent PMEM region cannot be reconstructed at 0x{:x}\n",
+                    record.address
+                );
+                if (rtl().finish_checked != nullptr) {
+                    rtl().finish_checked(device, false);
+                } else {
+                    rtl().finish(device, false);
+                }
+                return -1;
+            }
         }
     }
     *hdevice = device;
@@ -427,7 +487,8 @@ extern int vt_buf_alloc(
     paddr_t addr_allocated = 0;
     RtlBufferAllocator::Allocation allocation;
     std::string contract_error;
-    if (g_allocation_contract.compare_only()) {
+    const bool restoring_claim = g_allocation_contract.compare_only();
+    if (restoring_claim) {
         ventus::rtl_state::AllocationRecord restored;
         if (!g_allocation_contract.claim_restore_allocation(
                 size, buffer_type, taskID, kernelID, restored,
@@ -468,6 +529,27 @@ extern int vt_buf_alloc(
         );
         return -1;
     }
+    if (!restoring_claim) {
+        ventus::rtl_state::AllocationRecord record;
+        if (!g_allocation_contract.find_allocation(addr_allocated, record)
+            || !register_pmem_region(
+                static_cast<ventus_rtlsim_t *>(hdevice), record)) {
+            std::string rollback_error;
+            const bool contract_rolled_back = g_allocation_contract.record_free(
+                addr_allocated, allocation.requested_size, rollback_error
+            );
+            const bool allocator_rolled_back = g_rtl_buffer_allocator.free(
+                addr_allocated, allocation.requested_size
+            );
+            SPDLOG_LOGGER_ERROR(
+                logger,
+                "vt_buf_alloc: PMEM region registration failed at 0x{:x}; "
+                "rollback contract={}, allocator={}",
+                addr_allocated, contract_rolled_back, allocator_rolled_back
+            );
+            return -1;
+        }
+    }
     SPDLOG_LOGGER_DEBUG(
         logger, "vt_buf_alloc: vaddr_allocated=0x{:x}, size=0x{:x}, taskID={}", addr_allocated,
         size, taskID
@@ -482,13 +564,48 @@ extern int vt_buf_free(
 ) {
     if (hdevice == nullptr) return -1;
     std::string contract_error;
+    ventus::rtl_state::AllocationRecord allocation;
+    RtlBufferAllocator::Allocation allocator_allocation;
     if (vaddr == nullptr
-        || !g_allocation_contract.record_free(*vaddr, size, contract_error)
-        || !g_rtl_buffer_allocator.free(*vaddr, size)) {
+        || !g_allocation_contract.find_allocation(*vaddr, allocation)
+        || allocation.requested_size != size
+        || g_allocation_contract.compare_only()
+        || !g_rtl_buffer_allocator.find_allocation(
+            *vaddr, allocator_allocation)
+        || allocator_allocation.requested_size != allocation.requested_size
+        || allocator_allocation.allocated_size != allocation.allocated_size) {
         SPDLOG_LOGGER_ERROR(
             logger,
             "vt_buf_free: invalid free, vaddr=0x{:x}, size=0x{:x}, contract={}",
             vaddr ? *vaddr : 0, size, contract_error
+        );
+        return -1;
+    }
+    auto *device = static_cast<ventus_rtlsim_t *>(hdevice);
+    if (!unregister_pmem_region(device, allocation)) {
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "vt_buf_free: PMEM region unregister failed at 0x{:x}",
+            *vaddr
+        );
+        return -1;
+    }
+    if (!g_rtl_buffer_allocator.free(*vaddr, size)) {
+        const bool region_restored = register_pmem_region(device, allocation);
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "vt_buf_free: allocator release failed at 0x{:x}; "
+            "PMEM region restored={}",
+            *vaddr, region_restored
+        );
+        return -1;
+    }
+    if (!g_allocation_contract.record_free(*vaddr, size, contract_error)) {
+        SPDLOG_LOGGER_CRITICAL(
+            logger,
+            "vt_buf_free: allocation contract release failed after validated "
+            "allocator release at 0x{:x}: {}",
+            *vaddr, contract_error
         );
         return -1;
     }

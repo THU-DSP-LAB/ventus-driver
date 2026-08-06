@@ -69,6 +69,11 @@ typedef struct vt_kernel_metadata_t {  // 这个metadata是供驱动使用的，
 #define KNL_LDS_NON_STACK_SIZE 60
 #define KNL_MAX_METADATA_SIZE 64
 
+// Internal allocation kinds carried through the driver allocation contract.
+// Generic OpenCL buffer flags use their existing values; this reserved value
+// identifies the resident private-data-store pool to RTLSIM diagnostics.
+#define VT_BUFFER_TYPE_PDS 0x40000000
+
 // device caps ids
 #define VT_CAPS_VERSION           0x0
 #define VT_CAPS_MAX_CORES         0x1
