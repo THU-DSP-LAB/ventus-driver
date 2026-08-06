@@ -1162,6 +1162,18 @@ extern "C" int vt_dev_caps(vt_device_h *hdevice, uint64_t caps_id, uint64_t *val
     case VT_CAPS_MAX_WG_SLOTS:
         *value = kPtxCapsMaxWgSlotsPerCore;
         return 0;
+    case VT_CAPS_DVA_ADDRESS_BITS:
+        *value = 32;
+        return 0;
+    case VT_CAPS_DVA_BASE_ADDR:
+        *value = kVentusHeapBase;
+        return 0;
+    case VT_CAPS_DVA_WINDOW_SIZE:
+        *value = heap_size_bytes();
+        return 0;
+    case VT_CAPS_DVA_ALLOC_GRANULE:
+        *value = PtxHeapAllocator::kAllocAlignment;
+        return 0;
     default:
         return -1;
     }

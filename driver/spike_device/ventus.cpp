@@ -430,6 +430,18 @@ int vt_dev_caps(vt_device_h* hdevice, uint64_t caps_id, uint64_t *value) {
     case VT_CAPS_MAX_WG_SLOTS:
         *value = 1;
         return 0;
+    case VT_CAPS_DVA_ADDRESS_BITS:
+        *value = 32;
+        return 0;
+    case VT_CAPS_DVA_BASE_ADDR:
+        *value = 0x90000000ull;
+        return 0;
+    case VT_CAPS_DVA_WINDOW_SIZE:
+        *value = 0x70000000ull;
+        return 0;
+    case VT_CAPS_DVA_ALLOC_GRANULE:
+        *value = 4096;
+        return 0;
     default:
         return -1;
     }

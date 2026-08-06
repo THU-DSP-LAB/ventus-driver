@@ -584,6 +584,38 @@ void check_device_copy_failures(DriverFixture &fixture)
                             sizeof(destination), 0, 0) == -1);
 }
 
+void check_reusable_device_address_ranges()
+{
+    vt_device_h device = nullptr;
+    assert(vt_dev_open(&device) == 0);
+
+    uint64_t first = 0;
+    uint64_t middle = 0;
+    uint64_t last = 0;
+    assert(vt_buf_alloc(device, 1, &first, 0, 0, 0) == 0);
+    assert(vt_buf_alloc(device, 5000, &middle, 0, 0, 0) == 0);
+    assert(vt_buf_alloc(device, 1, &last, 0, 0, 0) == 0);
+    assert((first & 4095) == 0);
+    assert((middle & 4095) == 0);
+    assert((last & 4095) == 0);
+    assert(first < middle && middle < last);
+
+    uint64_t released_middle = middle;
+    assert(vt_one_buf_free(device, 5000, &released_middle, 0, 0) == 0);
+    uint64_t reused = 0;
+    assert(vt_buf_alloc(device, 5000, &reused, 0, 0, 0) == 0);
+    assert(reused == middle);
+
+    assert(vt_one_buf_free(device, 5000, &reused, 0, 0) == 0);
+    assert(vt_one_buf_free(device, 1, &last, 0, 0) == 0);
+    assert(vt_one_buf_free(device, 1, &first, 0, 0) == 0);
+    assert(vt_one_buf_free(device, 1, &first, 0, 0) == -1);
+
+    uint64_t overflow = 0;
+    assert(vt_buf_alloc(device, UINT64_MAX, &overflow, 0, 0, 0) == -1);
+    assert(vt_dev_close(device) == 0);
+}
+
 void check_invalid_rt_data_addresses(DriverFixture &fixture,
                                      const TestLayout &layout)
 {
@@ -632,6 +664,8 @@ int main()
     assert(vt_rt_consume_global(nullptr, nullptr, &count) == -1);
     assert(count == 0);
     assert(vt_rt_end_global(nullptr, nullptr) == -1);
+
+    check_reusable_device_address_ranges();
 
     DriverFixture fixture;
     const TestLayout layout = make_layout(fixture);

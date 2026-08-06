@@ -126,6 +126,10 @@ typedef struct vt_rt_resume_request {
 #define VT_CAPS_ALLOC_BASE_ADDR   0x6
 #define VT_CAPS_KERNEL_BASE_ADDR  0x7
 #define VT_CAPS_MAX_WG_SLOTS      0x8
+#define VT_CAPS_DVA_ADDRESS_BITS  0x9
+#define VT_CAPS_DVA_BASE_ADDR     0xa
+#define VT_CAPS_DVA_WINDOW_SIZE   0xb
+#define VT_CAPS_DVA_ALLOC_GRANULE 0xc
 
 #define MAX_TIMEOUT               (60*60*1000)   // 1hr 
 
