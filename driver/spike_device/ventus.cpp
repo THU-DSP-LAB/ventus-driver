@@ -660,13 +660,23 @@ extern int vt_rt_resume_global_candidates(
                         word),
                     ray_ref));
         };
-        const bool accept = control(ventus_rt::control_accept_hit) != 0;
-        const bool ignore = control(ventus_rt::control_ignore_hit) != 0;
-        const bool terminate = control(ventus_rt::control_terminate_ray) != 0;
-        actions.push_back(ignore || !accept
-            ? ventus_rt_wavefront::CompletionAction::Ignore
-            : terminate ? ventus_rt_wavefront::CompletionAction::AcceptTerminate
-                        : ventus_rt_wavefront::CompletionAction::AcceptContinue);
+        const uint32_t decision =
+            control(ventus_rt::control_callback_decision);
+        switch (decision) {
+        case ventus_rt::callback_accept:
+            actions.push_back(
+                ventus_rt_wavefront::CompletionAction::AcceptContinue);
+            break;
+        case ventus_rt::callback_ignore:
+            actions.push_back(ventus_rt_wavefront::CompletionAction::Ignore);
+            break;
+        case ventus_rt::callback_terminate:
+            actions.push_back(
+                ventus_rt_wavefront::CompletionAction::AcceptTerminate);
+            break;
+        default:
+            return fail_rt_global_session(device, out_request_count);
+        }
     }
     if (!session->memory.ok())
         return fail_rt_global_session(device, out_request_count);
@@ -739,16 +749,18 @@ extern int vt_rt_resume_global_intersections(
         const uint32_t ray_ref = ray_refs[i];
         ReportedIntersection report = {};
         report.ray_ref = ray_ref;
-        report.accepted = field(
+        const uint32_t decision = field(
             static_cast<ventus_rt_wavefront::CompletionField>(
                 static_cast<uint32_t>(
                     ventus_rt_wavefront::CompletionField::CandidateControlBase) +
-                ventus_rt::control_done), ray_ref) != 0;
-        report.terminate = field(
-            static_cast<ventus_rt_wavefront::CompletionField>(
-                static_cast<uint32_t>(
-                    ventus_rt_wavefront::CompletionField::CandidateControlBase) +
-                ventus_rt::control_terminate_ray), ray_ref) != 0;
+                ventus_rt::control_callback_decision), ray_ref);
+        if (decision != ventus_rt::callback_accept &&
+            decision != ventus_rt::callback_ignore &&
+            decision != ventus_rt::callback_terminate)
+            return fail_rt_global_session(device, out_request_count);
+        report.accepted = decision == ventus_rt::callback_accept ||
+                          decision == ventus_rt::callback_terminate;
+        report.terminate = decision == ventus_rt::callback_terminate;
         if (!report.accepted) {
             reported.push_back(report);
             continue;

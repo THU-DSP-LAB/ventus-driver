@@ -478,9 +478,9 @@ void check_intersection_resume(DriverFixture &fixture, const TestLayout &layout)
         completion_field_address(
             completion,
             add_field(CompletionField::CandidateControlBase,
-                      control_done),
+                      control_callback_decision),
             ref),
-        1);
+        callback_accept);
 
     assert(vt_rt_resume_global_intersections(fixture.device(), &info, &ref, 1,
                                              &count) == 0);
