@@ -67,7 +67,9 @@ typedef struct vt_kernel_metadata_t {  // 这个metadata是供驱动使用的，
 #define KNL_PRINT_SIZE 52
 #define KNL_LDS_STACK_SIZE_PER_WF 56
 #define KNL_LDS_NON_STACK_SIZE 60
-#define KNL_MAX_METADATA_SIZE 64
+#define KNL_PDS_SIZE_PER_THREAD 64
+#define KNL_PDS_STACK_BASE_PER_THREAD 68
+#define KNL_MAX_METADATA_SIZE 72
 
 // Internal allocation kinds carried through the driver allocation contract.
 // Generic OpenCL buffer flags use their existing values; this reserved value

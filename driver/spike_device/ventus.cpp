@@ -123,9 +123,33 @@ extern int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *dst_a
 }
 
 extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t* metaData, uint64_t taskID) {
-    if(hdevice == nullptr)
+    if(hdevice == nullptr || metaData == nullptr)
         return -1;
     auto device = (spike_device *) hdevice;
+    if (metaData->pdsSize > UINT32_MAX) {
+        std::cerr << "vt_start: pdsSize exceeds the RV32 kernel metadata ABI"
+                  << std::endl;
+        return -1;
+    }
+    uint32_t kernel_pds_size_per_thread = 0;
+    uint32_t kernel_pds_stack_base_per_thread = 0;
+    if (device->copy_from_dev(
+            metaData->metaDataBaseAddr + KNL_PDS_SIZE_PER_THREAD,
+            sizeof(kernel_pds_size_per_thread),
+            &kernel_pds_size_per_thread) != 0 ||
+        kernel_pds_size_per_thread != static_cast<uint32_t>(metaData->pdsSize)) {
+        std::cerr << "vt_start: kernel and host PDS metadata disagree"
+                  << std::endl;
+        return -1;
+    }
+    if (device->copy_from_dev(
+            metaData->metaDataBaseAddr + KNL_PDS_STACK_BASE_PER_THREAD,
+            sizeof(kernel_pds_stack_base_per_thread),
+            &kernel_pds_stack_base_per_thread) != 0 ||
+        kernel_pds_stack_base_per_thread > kernel_pds_size_per_thread) {
+        std::cerr << "vt_start: invalid kernel PDS stack base" << std::endl;
+        return -1;
+    }
 
     device->run(reinterpret_cast<meta_data*>(metaData),0x80000000);
     return 0;
