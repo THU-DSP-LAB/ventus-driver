@@ -3,6 +3,9 @@ project(${PROJECT})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+# Keep the driver ABI synchronized with the RTL backend under development;
+# installing an uncommitted simulator into install/ is intentionally avoided.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../../gpgpu/sim-verilator)
 include_directories(${VENTUS_INSTALL_PREFIX}/include)
 
 file(GLOB_RECURSE SRCS ./ventus.cpp)

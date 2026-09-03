@@ -13,6 +13,7 @@
 #include "utils.hpp"
 #include "ventus_rtlsim.h"
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -22,6 +23,8 @@
 
 // static std::map<int, uint64_t> ptroots; // pagetable root physical address
 static std::shared_ptr<spdlog::logger> logger;
+
+int vt_dump_perf(vt_device_h device, FILE *stream);
 
 namespace {
 RtlBufferAllocator g_rtl_buffer_allocator;
@@ -83,6 +86,17 @@ extern int vt_dev_open(vt_device_h *hdevice) {
 extern int vt_dev_close(vt_device_h hdevice) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
+    if (const char *path = std::getenv("VENTUS_RTLSIM_PERF_JSON"); path != nullptr && path[0] != '\0') {
+        FILE *stream = std::fopen(path, "w");
+        if (stream == nullptr) {
+            SPDLOG_LOGGER_ERROR(logger, "failed to open RTL performance JSON: {}", path);
+        } else {
+            if (vt_dump_perf(hdevice, stream) != 0) {
+                SPDLOG_LOGGER_ERROR(logger, "failed to write RTL performance JSON: {}", path);
+            }
+            std::fclose(stream);
+        }
+    }
     rtl().finish(device, false);
     SPDLOG_LOGGER_DEBUG(logger, "vt_dev_close : goodbye from ventus.cpp (rtlsim device)");
     return 0;
@@ -318,4 +332,50 @@ extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int 
 int vt_upload_kernel_bytes(vt_device_h device, const void *content, uint64_t size, int taskID) {
     return 0;
 }
-int vt_dump_perf(vt_device_h device, FILE *stream) { return 0; }
+int vt_dump_perf(vt_device_h device, FILE *stream) {
+    if (device == nullptr || stream == nullptr) return -1;
+
+    if (rtl().get_rtcore_pmu == nullptr) return -1;
+    const auto pmu = rtl().get_rtcore_pmu(static_cast<ventus_rtlsim_t *>(device));
+    if (pmu.rtcore == nullptr) return -1;
+
+    uint32_t external_memory_latency = 0;
+    if (rtl().get_parameter("rtl_external_mem_latency", &external_memory_latency) != 0) return -1;
+
+    std::fprintf(
+        stream,
+        "{\"schema_version\":1,\"simulator\":\"verilator-rtl\","
+        "\"simulation_time_units\":%llu,\"clock_cycles\":%llu,"
+        "\"external_memory_read_latency_cycles\":%u,\"sm\":[",
+        static_cast<unsigned long long>(rtl().get_time(static_cast<ventus_rtlsim_t *>(device))),
+        static_cast<unsigned long long>(rtl().get_time(static_cast<ventus_rtlsim_t *>(device)) / 10),
+        external_memory_latency
+    );
+    for (uint32_t sm = 0; sm < pmu.num_sm; ++sm) {
+        const auto &rt = pmu.rtcore[sm];
+        if (sm != 0) std::fputc(',', stream);
+        std::fprintf(
+            stream,
+            "{\"id\":%u,\"rtcore\":{"
+            "\"traverse_issued\":%llu,\"traverse_active_lanes\":%llu,"
+            "\"completion_count\":%llu,\"completion_lanes\":%llu,\"release_issued\":%llu,"
+            "\"active_session_cycles\":%llu,\"command_backpressure_cycles\":%llu,"
+            "\"completion_backpressure_cycles\":%llu,\"release_backpressure_cycles\":%llu,"
+            "\"lsu_requests\":%llu,\"lsu_responses\":%llu,\"lsu_backpressure_cycles\":%llu}}",
+            sm,
+            static_cast<unsigned long long>(rt.traverse_issued),
+            static_cast<unsigned long long>(rt.traverse_active_lanes),
+            static_cast<unsigned long long>(rt.completion_count),
+            static_cast<unsigned long long>(rt.completion_lanes),
+            static_cast<unsigned long long>(rt.release_issued),
+            static_cast<unsigned long long>(rt.active_session_cycles),
+            static_cast<unsigned long long>(rt.command_backpressure_cycles),
+            static_cast<unsigned long long>(rt.completion_backpressure_cycles),
+            static_cast<unsigned long long>(rt.release_backpressure_cycles),
+            static_cast<unsigned long long>(rt.lsu_requests),
+            static_cast<unsigned long long>(rt.lsu_responses),
+            static_cast<unsigned long long>(rt.lsu_backpressure_cycles)
+        );
+    }
+    return std::fprintf(stream, "]}\n") < 0 ? -1 : 0;
+}
