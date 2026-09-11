@@ -70,13 +70,20 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     config.waveform.filename = "waveform.rtl.fst";
     config.snapshot.enable = false;
     config.hang_timeout = ventus::rtlsim_watchdog::hang_timeout_from_env();
+    const char *log_level = std::getenv("VENTUS_RTLSIM_LOG_LEVEL");
+    if (log_level == nullptr || log_level[0] == '\0') log_level = "info";
     config.log.console.enable = true;
-    config.log.console.level = "trace";
+    config.log.console.level = log_level;
     config.log.file.enable = false;
+    config.log.level = log_level;
     auto device = rtl().init(&config);
     *hdevice = device;
-    logger = spdlog::stdout_color_mt("ventus");
-    logger->set_level(spdlog::level::trace);
+    logger = spdlog::get("ventus");
+    if (!logger) logger = spdlog::stdout_color_mt("ventus");
+    // Keep the post-init driver logger consistent with the simulator logger.
+    // This makes the existing allocation/launch diagnostics available on
+    // demand without compiling any RTL trace points.
+    logger->set_level(spdlog::level::from_str(log_level));
     logger->set_pattern("[%l] %v [%s:%#]");
     SPDLOG_LOGGER_DEBUG(logger, "vt_dev_open : hello world from ventus.cpp (rtlsim device)");
     return 0;
@@ -344,7 +351,7 @@ int vt_dump_perf(vt_device_h device, FILE *stream) {
 
     std::fprintf(
         stream,
-        "{\"schema_version\":1,\"simulator\":\"verilator-rtl\","
+        "{\"schema_version\":2,\"simulator\":\"verilator-rtl\","
         "\"simulation_time_units\":%llu,\"clock_cycles\":%llu,"
         "\"external_memory_read_latency_cycles\":%u,\"sm\":[",
         static_cast<unsigned long long>(rtl().get_time(static_cast<ventus_rtlsim_t *>(device))),
@@ -361,7 +368,13 @@ int vt_dump_perf(vt_device_h device, FILE *stream) {
             "\"completion_count\":%llu,\"completion_lanes\":%llu,\"release_issued\":%llu,"
             "\"active_session_cycles\":%llu,\"command_backpressure_cycles\":%llu,"
             "\"completion_backpressure_cycles\":%llu,\"release_backpressure_cycles\":%llu,"
-            "\"lsu_requests\":%llu,\"lsu_responses\":%llu,\"lsu_backpressure_cycles\":%llu}}",
+            "\"local_sram_read_requests\":%llu,\"local_sram_write_requests\":%llu,"
+            "\"local_sram_read_responses\":%llu,\"local_sram_backpressure_cycles\":%llu,"
+            "\"ray_setup_outputs\":%llu,\"as_line_acquires\":%llu,\"as_line_ready\":%llu,"
+            "\"as_acquire_backpressure_cycles\":%llu,\"box4_issued\":%llu,\"box4_results\":%llu,"
+            "\"triangle_issued\":%llu,\"triangle_results\":%llu,"
+            "\"triangle_resolve_issued\":%llu,\"triangle_resolve_results\":%llu,"
+            "\"stack_pushes\":%llu,\"stack_pops\":%llu}}",
             sm,
             static_cast<unsigned long long>(rt.traverse_issued),
             static_cast<unsigned long long>(rt.traverse_active_lanes),
@@ -372,9 +385,22 @@ int vt_dump_perf(vt_device_h device, FILE *stream) {
             static_cast<unsigned long long>(rt.command_backpressure_cycles),
             static_cast<unsigned long long>(rt.completion_backpressure_cycles),
             static_cast<unsigned long long>(rt.release_backpressure_cycles),
-            static_cast<unsigned long long>(rt.lsu_requests),
-            static_cast<unsigned long long>(rt.lsu_responses),
-            static_cast<unsigned long long>(rt.lsu_backpressure_cycles)
+            static_cast<unsigned long long>(rt.local_sram_read_requests),
+            static_cast<unsigned long long>(rt.local_sram_write_requests),
+            static_cast<unsigned long long>(rt.local_sram_read_responses),
+            static_cast<unsigned long long>(rt.local_sram_backpressure_cycles),
+            static_cast<unsigned long long>(rt.ray_setup_outputs),
+            static_cast<unsigned long long>(rt.as_line_acquires),
+            static_cast<unsigned long long>(rt.as_line_ready),
+            static_cast<unsigned long long>(rt.as_acquire_backpressure_cycles),
+            static_cast<unsigned long long>(rt.box4_issued),
+            static_cast<unsigned long long>(rt.box4_results),
+            static_cast<unsigned long long>(rt.triangle_issued),
+            static_cast<unsigned long long>(rt.triangle_results),
+            static_cast<unsigned long long>(rt.triangle_resolve_issued),
+            static_cast<unsigned long long>(rt.triangle_resolve_results),
+            static_cast<unsigned long long>(rt.stack_pushes),
+            static_cast<unsigned long long>(rt.stack_pops)
         );
     }
     return std::fprintf(stream, "]}\n") < 0 ? -1 : 0;
