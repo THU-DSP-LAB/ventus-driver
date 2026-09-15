@@ -416,5 +416,11 @@ int vt_dump_perf(vt_device_h device, FILE *stream) {
             static_cast<unsigned long long>(rt.stack_pops)
         );
     }
-    return std::fprintf(stream, "]}\n") < 0 ? -1 : 0;
+    std::fputs("],\"extended\":", stream);
+    if (rtl().dump_extended_pmu) {
+        if (rtl().dump_extended_pmu(static_cast<ventus_rtlsim_t *>(device), stream) != 0) return -1;
+    } else {
+        std::fputs("null", stream);
+    }
+    return std::fprintf(stream, "}\n") < 0 ? -1 : 0;
 }

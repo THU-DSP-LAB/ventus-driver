@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstdio>
 #include <dlfcn.h>
 #include <fmt/core.h>
 #include <stdexcept>
@@ -34,6 +35,7 @@ struct Api {
     const ventus_rtlsim_step_result_t *(*step)(ventus_rtlsim_t *) = nullptr;
     ventus_rtlsim_pmu_t (*get_pmu)(const ventus_rtlsim_t *) = nullptr;
     ventus_rtlsim_rtcore_pmu_view_t (*get_rtcore_pmu)(const ventus_rtlsim_t *) = nullptr;
+    int (*dump_extended_pmu)(const ventus_rtlsim_t *, FILE *) = nullptr;
     void (*icache_invalidate)(ventus_rtlsim_t *) = nullptr;
     void (*add_kernel)(
         ventus_rtlsim_t *, const ventus_kernel_metadata_t *, void (*finish_callback)(void *)
@@ -165,6 +167,9 @@ inline Api open_library(std::string_view soname, FirmwareApiRequirement firmware
     );
     api.icache_invalidate =
         load_symbol<void (*)(ventus_rtlsim_t *)>(handle, "ventus_rtlsim_icache_invalidate");
+    // Optional so existing off/basic runtimes remain loadable.
+    api.dump_extended_pmu = load_optional_symbol<int (*)(const ventus_rtlsim_t *, FILE *)>(
+        handle, "ventus_rtlsim_dump_extended_pmu");
     api.add_kernel = load_symbol<
         void (*)(ventus_rtlsim_t *, const ventus_kernel_metadata_t *, void (*)(void *))>(
         handle, "ventus_rtlsim_add_kernel"
