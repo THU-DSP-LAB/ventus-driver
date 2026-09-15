@@ -40,8 +40,10 @@ typedef struct vt_kernel_metadata_t {  // 这个metadata是供驱动使用的，
     uint64_t metaDataBaseAddr;///> CSR_KNL的值，
     uint64_t ldsSize;///> 每个workgroup使用的local memory的大小
     uint64_t pdsSize;///> 每个thread用到的private memory大小
-    uint64_t sgprUsage;///> 每个warp使用的标量寄存器数目
-    uint64_t vgprUsage;///> 每个thread使用的向量寄存器数目
+    // Launch allocation counts, not raw ELF usage: round up to register-bank
+    // granularity (4 in the current RTL). These counts also define WF strides.
+    uint64_t sgprUsage;///> 每个warp分配的标量寄存器数目
+    uint64_t vgprUsage;///> 每个thread分配的向量寄存器数目
     uint64_t pdsBaseAddr;///> private memory的基址，要转成每个workgroup的基地址， wf_size*wg_size*pdsSize
     uint64_t num_thread_global[3];///> 全局三维thread数目
     uint64_t num_thread_local[3];///> 线程块内三维thread数目

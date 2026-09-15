@@ -49,6 +49,7 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     auto env_waveform = std::getenv("VENTUS_WAVEFORM");
     auto env_waveform_begin = std::getenv("VENTUS_WAVEFORM_BEGIN");
     auto env_waveform_end = std::getenv("VENTUS_WAVEFORM_END");
+    auto env_waveform_file = std::getenv("VENTUS_WAVEFORM_FILE");
     bool waveform_enable = false;
     uint64_t waveform_begin = UINT64_MAX; // default: not enable
     uint64_t waveform_end = 0;
@@ -67,7 +68,9 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     config.waveform.enable = waveform_enable;
     config.waveform.time_begin = waveform_begin;
     config.waveform.time_end = waveform_end;
-    config.waveform.filename = "waveform.rtl.fst";
+    config.waveform.filename = (env_waveform_file != nullptr && env_waveform_file[0] != '\0')
+                                   ? env_waveform_file
+                                   : "waveform.rtl.fst";
     config.snapshot.enable = false;
     config.hang_timeout = ventus::rtlsim_watchdog::hang_timeout_from_env();
     const char *log_level = std::getenv("VENTUS_RTLSIM_LOG_LEVEL");
@@ -371,7 +374,10 @@ int vt_dump_perf(vt_device_h device, FILE *stream) {
             "\"local_sram_read_requests\":%llu,\"local_sram_write_requests\":%llu,"
             "\"local_sram_read_responses\":%llu,\"local_sram_backpressure_cycles\":%llu,"
             "\"ray_setup_outputs\":%llu,\"as_line_acquires\":%llu,\"as_line_ready\":%llu,"
-            "\"as_acquire_backpressure_cycles\":%llu,\"box4_issued\":%llu,\"box4_results\":%llu,"
+            "\"as_acquire_backpressure_cycles\":%llu,\"as_cache_resident_hits\":%llu,"
+            "\"as_cache_pending_merges\":%llu,\"as_cache_misses\":%llu,\"as_cache_refills\":%llu,"
+            "\"as_cache_evictions\":%llu,\"as_cache_average_waiter_uses\":%.6f,"
+            "\"box4_issued\":%llu,\"box4_results\":%llu,"
             "\"triangle_issued\":%llu,\"triangle_results\":%llu,"
             "\"triangle_resolve_issued\":%llu,\"triangle_resolve_results\":%llu,"
             "\"stack_pushes\":%llu,\"stack_pops\":%llu}}",
@@ -393,6 +399,13 @@ int vt_dump_perf(vt_device_h device, FILE *stream) {
             static_cast<unsigned long long>(rt.as_line_acquires),
             static_cast<unsigned long long>(rt.as_line_ready),
             static_cast<unsigned long long>(rt.as_acquire_backpressure_cycles),
+            static_cast<unsigned long long>(rt.as_cache_resident_hits),
+            static_cast<unsigned long long>(rt.as_cache_pending_merges),
+            static_cast<unsigned long long>(rt.as_cache_misses),
+            static_cast<unsigned long long>(rt.as_cache_refills),
+            static_cast<unsigned long long>(rt.as_cache_evictions),
+            rt.as_cache_refills == 0 ? 0.0 :
+              static_cast<double>(rt.as_line_ready) / static_cast<double>(rt.as_cache_refills),
             static_cast<unsigned long long>(rt.box4_issued),
             static_cast<unsigned long long>(rt.box4_results),
             static_cast<unsigned long long>(rt.triangle_issued),
