@@ -8,6 +8,7 @@
 #include "ventus.h"
 #include "loadelf.hpp"
 #include "rtl_buffer_allocator.hpp"
+#include "rt_spill_pool.hpp"
 #include "rtlsim_backend_loader.hpp"
 #include "rtlsim_watchdog.hpp"
 #include "utils.hpp"
@@ -16,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <unordered_map>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <stdlib.h>
@@ -28,6 +30,7 @@ int vt_dump_perf(vt_device_h device, FILE *stream);
 
 namespace {
 RtlBufferAllocator g_rtl_buffer_allocator;
+std::unordered_map<ventus_rtlsim_t *, RtSpillPool> g_rt_spill_pools;
 
 const ventus::rtlsim_backend::Api &rtl() {
     static constexpr ventus::rtlsim_backend::LibraryNames kLibraries = {
@@ -106,6 +109,11 @@ extern int vt_dev_close(vt_device_h hdevice) {
             }
             std::fclose(stream);
         }
+    }
+    auto pool = g_rt_spill_pools.find(device);
+    if (pool != g_rt_spill_pools.end()) {
+        pool->second.release(g_rtl_buffer_allocator);
+        g_rt_spill_pools.erase(pool);
     }
     rtl().finish(device, false);
     SPDLOG_LOGGER_DEBUG(logger, "vt_dev_close : goodbye from ventus.cpp (rtlsim device)");
@@ -248,6 +256,13 @@ extern int vt_copy_from_dev(
 extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint64_t taskID) {
     if (hdevice == nullptr || mtd_driver == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
+    uint32_t cores = 0;
+    if (rtl().get_parameter("num_sm", &cores) != 0) return -1;
+    auto &spill_pool = g_rt_spill_pools[device];
+    if (!spill_pool.prepare_dispatch(g_rtl_buffer_allocator, cores)) {
+        SPDLOG_LOGGER_ERROR(logger, "driver-private RT spill pool allocation failed");
+        return -1;
+    }
     ventus_kernel_metadata_t mtd_sim{
         .name = mtd_driver->kernel_name,
         .data = nullptr,
@@ -273,6 +288,10 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
             {mtd_driver->threadIdxOffset[0], mtd_driver->threadIdxOffset[1],
              mtd_driver->threadIdxOffset[2]},
         .num_buffer = 0,
+        .rtSpillPoolBase = spill_pool.spill_base(),
+        .rtSpillSlotsPerCore = RtSpillPool::kSlotsPerCore,
+        .rtSpillPerCoreStride = RtSpillPool::kCoreStride,
+        .rtSpillDispatchEpoch = spill_pool.epoch(),
     };
     SPDLOG_LOGGER_DEBUG(
         logger,
