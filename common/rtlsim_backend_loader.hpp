@@ -32,16 +32,28 @@ struct Api {
     int (*get_parameter)(const char *, uint32_t *) = nullptr;
     ventus_rtlsim_t *(*init)(const ventus_rtlsim_config_t *) = nullptr;
     void (*finish)(ventus_rtlsim_t *, bool) = nullptr;
+    int (*finish_checked)(ventus_rtlsim_t *, bool) = nullptr;
+    int (*save_state)(ventus_rtlsim_t *, const char *) = nullptr;
+    ventus_rtlsim_t *(*restore_state)(
+        const ventus_rtlsim_config_t *, const char *
+    ) = nullptr;
+    uint32_t (*persistent_state_version)() = nullptr;
     const ventus_rtlsim_step_result_t *(*step)(ventus_rtlsim_t *) = nullptr;
     ventus_rtlsim_pmu_t (*get_pmu)(const ventus_rtlsim_t *) = nullptr;
     ventus_rtlsim_rtcore_pmu_view_t (*get_rtcore_pmu)(const ventus_rtlsim_t *) = nullptr;
     int (*dump_extended_pmu)(const ventus_rtlsim_t *, FILE *) = nullptr;
     void (*icache_invalidate)(ventus_rtlsim_t *) = nullptr;
+    void (*dcache_host_invalidate)(ventus_rtlsim_t *) = nullptr;
     void (*add_kernel)(
         ventus_rtlsim_t *, const ventus_kernel_metadata_t *, void (*finish_callback)(void *)
     ) = nullptr;
     bool (*pmemcpy_h2d)(ventus_rtlsim_t *, paddr_t, const void *, uint64_t) = nullptr;
     bool (*pmemcpy_d2h)(ventus_rtlsim_t *, void *, paddr_t, uint64_t) = nullptr;
+    bool (*pmem_region_register)(
+        ventus_rtlsim_t *, paddr_t, uint64_t, uint64_t,
+        ventus_pmem_region_kind_t, uint64_t
+    ) = nullptr;
+    bool (*pmem_region_unregister)(ventus_rtlsim_t *, paddr_t, uint64_t) = nullptr;
     int (*fw_vt_dev_open)() = nullptr;
     int (*fw_vt_dev_close)() = nullptr;
     int (*fw_vt_buf_alloc_fixed)(uint64_t, uint64_t, int, uint64_t, uint64_t) = nullptr;
@@ -115,7 +127,11 @@ template <typename Fn> inline Fn load_symbol(void *handle, const char *name) {
 template <typename Fn> inline Fn load_optional_symbol(void *handle, const char *name) {
     dlerror();
     void *symbol = dlsym(handle, name);
-    return dlerror() == nullptr && symbol != nullptr ? reinterpret_cast<Fn>(symbol) : nullptr;
+    const char *err = dlerror();
+    if (err != nullptr || symbol == nullptr) {
+        return nullptr;
+    }
+    return reinterpret_cast<Fn>(symbol);
 }
 
 inline void load_firmware_symbols(Api &api, void *handle) {
@@ -157,6 +173,18 @@ inline Api open_library(std::string_view soname, FirmwareApiRequirement firmware
         handle, "ventus_rtlsim_init"
     );
     api.finish = load_symbol<void (*)(ventus_rtlsim_t *, bool)>(handle, "ventus_rtlsim_finish");
+    api.finish_checked =
+        load_optional_symbol<int (*)(ventus_rtlsim_t *, bool)>(handle, "ventus_rtlsim_finish_checked");
+    api.save_state = load_optional_symbol<int (*)(ventus_rtlsim_t *, const char *)>(
+        handle, "ventus_rtlsim_save_state"
+    );
+    api.restore_state = load_optional_symbol<
+        ventus_rtlsim_t *(*)(const ventus_rtlsim_config_t *, const char *)>(
+        handle, "ventus_rtlsim_restore_state"
+    );
+    api.persistent_state_version = load_optional_symbol<uint32_t (*)()>(
+        handle, "ventus_rtlsim_persistent_state_version"
+    );
     api.step = load_symbol<const ventus_rtlsim_step_result_t *(*)(ventus_rtlsim_t *)>(
         handle, "ventus_rtlsim_step"
     );
@@ -170,6 +198,9 @@ inline Api open_library(std::string_view soname, FirmwareApiRequirement firmware
     // Optional so existing off/basic runtimes remain loadable.
     api.dump_extended_pmu = load_optional_symbol<int (*)(const ventus_rtlsim_t *, FILE *)>(
         handle, "ventus_rtlsim_dump_extended_pmu");
+    api.dcache_host_invalidate = load_optional_symbol<void (*)(ventus_rtlsim_t *)>(
+        handle, "ventus_rtlsim_dcache_host_invalidate"
+    );
     api.add_kernel = load_symbol<
         void (*)(ventus_rtlsim_t *, const ventus_kernel_metadata_t *, void (*)(void *))>(
         handle, "ventus_rtlsim_add_kernel"
@@ -179,6 +210,15 @@ inline Api open_library(std::string_view soname, FirmwareApiRequirement firmware
     );
     api.pmemcpy_d2h = load_symbol<bool (*)(ventus_rtlsim_t *, void *, paddr_t, uint64_t)>(
         handle, "ventus_rtlsim_pmemcpy_d2h"
+    );
+    api.pmem_region_register = load_optional_symbol<
+        bool (*)(ventus_rtlsim_t *, paddr_t, uint64_t, uint64_t,
+                 ventus_pmem_region_kind_t, uint64_t)>(
+        handle, "ventus_rtlsim_pmem_region_register"
+    );
+    api.pmem_region_unregister = load_optional_symbol<
+        bool (*)(ventus_rtlsim_t *, paddr_t, uint64_t)>(
+        handle, "ventus_rtlsim_pmem_region_unregister"
     );
     if (firmware_api == FirmwareApiRequirement::required) {
         load_firmware_symbols(api, handle);

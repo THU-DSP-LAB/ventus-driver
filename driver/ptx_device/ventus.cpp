@@ -37,6 +37,7 @@
 #include <string>
 #include <string_view>
 #include <sys/wait.h>
+#include <unistd.h>
 #include <unordered_map>
 #include <vector>
 
@@ -209,7 +210,20 @@ static std::string resolve_sbt_ptx_path() {
 
 static fs::path resolve_ptx_cache_dir() {
     if (const auto v = getenv_str("GPU_SBT_PTX_CACHE_DIR")) return fs::path(*v);
-    return fs::path("/tmp/ventus_sbt_ptx");
+    fs::path tmp_root;
+    try {
+        tmp_root = fs::temp_directory_path();
+    } catch (...) {
+        tmp_root = fs::path("/tmp");
+    }
+
+    std::string user_tag;
+    if (const auto v = getenv_str("USER")) {
+        user_tag = sanitize_filename_component(*v);
+    } else {
+        user_tag = "uid" + std::to_string(static_cast<unsigned>(geteuid()));
+    }
+    return tmp_root / ("ventus_sbt_ptx_" + user_tag);
 }
 
 static bool read_file_to_string(const fs::path &p, std::string *out) {
@@ -1455,7 +1469,7 @@ extern "C" int vt_clear_perf_context(vt_device_h hdevice) {
 // PoCL passes a driver-level `vt_kernel_metadata_t` which includes:
 // - kernel_size[]: number of work-groups (maps to CUDA grid dim)
 // - num_thread_local[]: local size (maps to CUDA block dim)
-// - metaDataBaseAddr: Ventus u32 address of the 64B "hardware metadata buffer" (CSR_KNL)
+// - metaDataBaseAddr: Ventus u32 address of the 72B hardware metadata buffer (CSR_KNL)
 extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uint64_t taskID) {
     (void)taskID;
 
@@ -1510,6 +1524,8 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
     uint32_t pds_pool_num_blocks = 0;
     uint32_t lds_stack_size_per_wf = 0;
     uint32_t lds_non_stack_size = 0;
+    uint32_t kernel_pds_size_per_thread = 0;
+    uint32_t kernel_pds_stack_base_per_thread = 0;
 
     if (!read_u32_from_vaddr(dev, knl_vaddr + KNL_LDS_STACK_SIZE_PER_WF, &lds_stack_size_per_wf)) {
         SPDLOG_LOGGER_ERROR(
@@ -1522,6 +1538,40 @@ extern "C" int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *metaData, uin
         SPDLOG_LOGGER_ERROR(
             logger, "vt_start: cannot read KNL_LDS_NON_STACK_SIZE from knl_vaddr={}",
             hex_u64(knl_vaddr)
+        );
+        return -1;
+    }
+    if (!read_u32_from_vaddr(
+            dev, knl_vaddr + KNL_PDS_SIZE_PER_THREAD,
+            &kernel_pds_size_per_thread)) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_start: cannot read KNL_PDS_SIZE_PER_THREAD from knl_vaddr={}",
+            hex_u64(knl_vaddr)
+        );
+        return -1;
+    }
+    if (kernel_pds_size_per_thread != pds_size_per_thread) {
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "vt_start: PDS size mismatch between kernel metadata ({}) and host metadata ({})",
+            kernel_pds_size_per_thread, pds_size_per_thread
+        );
+        return -1;
+    }
+    if (!read_u32_from_vaddr(
+            dev, knl_vaddr + KNL_PDS_STACK_BASE_PER_THREAD,
+            &kernel_pds_stack_base_per_thread)) {
+        SPDLOG_LOGGER_ERROR(
+            logger, "vt_start: cannot read KNL_PDS_STACK_BASE_PER_THREAD from knl_vaddr={}",
+            hex_u64(knl_vaddr)
+        );
+        return -1;
+    }
+    if (kernel_pds_stack_base_per_thread > kernel_pds_size_per_thread) {
+        SPDLOG_LOGGER_ERROR(
+            logger,
+            "vt_start: PDS stack base ({}) exceeds per-thread allocation ({})",
+            kernel_pds_stack_base_per_thread, kernel_pds_size_per_thread
         );
         return -1;
     }

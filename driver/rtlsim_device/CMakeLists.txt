@@ -8,7 +8,10 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../common)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../../gpgpu/sim-verilator)
 include_directories(${VENTUS_INSTALL_PREFIX}/include)
 
-file(GLOB_RECURSE SRCS ./ventus.cpp)
+set(SRCS
+    ./ventus.cpp
+    ./rtl_raw_state.cpp
+)
 
 add_library(${PROJECT} SHARED ${SRCS})
 target_link_libraries(${PROJECT} PRIVATE driver_common_utils)

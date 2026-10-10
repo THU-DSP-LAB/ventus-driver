@@ -13,3 +13,25 @@ add_test(NAME perf_recorder COMMAND test_perf_recorder)
 
 add_executable(test_rt_spill_pool test_rt_spill_pool.cpp)
 add_test(NAME rt_spill_pool COMMAND test_rt_spill_pool)
+add_executable(test_rtl_buffer_allocator test_rtl_buffer_allocator.cpp)
+add_test(NAME rtl_buffer_allocator COMMAND test_rtl_buffer_allocator)
+
+add_executable(test_rtl_state_contract test_rtl_state_contract.cpp)
+add_test(NAME rtl_state_contract COMMAND test_rtl_state_contract)
+
+add_executable(test_rtlsim_wait_deadline test_rtlsim_wait_deadline.cpp)
+target_include_directories(
+    test_rtlsim_wait_deadline PRIVATE ../driver/rtlsim_device
+)
+add_test(NAME rtlsim_wait_deadline COMMAND test_rtlsim_wait_deadline)
+
+add_executable(
+    test_rtl_raw_state
+    test_rtl_raw_state.cpp
+    ../driver/rtlsim_device/rtl_raw_state.cpp
+)
+target_include_directories(
+    test_rtl_raw_state PRIVATE ../driver/rtlsim_device
+)
+target_compile_features(test_rtl_raw_state PRIVATE cxx_std_17)
+add_test(NAME rtl_raw_state COMMAND test_rtl_raw_state)
