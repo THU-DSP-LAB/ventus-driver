@@ -11,6 +11,8 @@ add_executable(test_perf_recorder test_perf_recorder.cpp)
 target_link_libraries(test_perf_recorder PRIVATE driver_common_utils)
 add_test(NAME perf_recorder COMMAND test_perf_recorder)
 
+add_executable(test_rt_spill_pool test_rt_spill_pool.cpp)
+add_test(NAME rt_spill_pool COMMAND test_rt_spill_pool)
 add_executable(test_rtl_buffer_allocator test_rtl_buffer_allocator.cpp)
 add_test(NAME rtl_buffer_allocator COMMAND test_rtl_buffer_allocator)
 

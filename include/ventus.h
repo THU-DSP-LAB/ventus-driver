@@ -40,8 +40,10 @@ typedef struct vt_kernel_metadata_t {  // 这个metadata是供驱动使用的，
     uint64_t metaDataBaseAddr;///> CSR_KNL的值，
     uint64_t ldsSize;///> 每个workgroup使用的local memory的大小
     uint64_t pdsSize;///> 每个thread用到的private memory大小
-    uint64_t sgprUsage;///> 每个warp使用的标量寄存器数目
-    uint64_t vgprUsage;///> 每个thread使用的向量寄存器数目
+    // Launch allocation counts, not raw ELF usage: round up to register-bank
+    // granularity (4 in the current RTL). These counts also define WF strides.
+    uint64_t sgprUsage;///> 每个warp分配的标量寄存器数目
+    uint64_t vgprUsage;///> 每个thread分配的向量寄存器数目
     uint64_t pdsBaseAddr;///> private memory的基址，要转成每个workgroup的基地址， wf_size*wg_size*pdsSize
     uint64_t num_thread_global[3];///> 全局三维thread数目
     uint64_t num_thread_local[3];///> 线程块内三维thread数目
@@ -49,6 +51,43 @@ typedef struct vt_kernel_metadata_t {  // 这个metadata是供驱动使用的，
     const char* kernel_name; ///> kernel名称
     uint64_t pdsResidentWgCount; ///> 全设备 resident PDS slot 总数（跨所有 SM 的线性 slot 数）
 } vt_kernel_metadata_t;
+
+/*
+ * Host-only handoff for the PDS-free RT wavefront worker.  The caller owns
+ * all device allocations.  Committed and candidate attributes use distinct
+ * ray_ref-indexed arenas; payload itself is never copied or synthesized by
+ * this API.
+ */
+typedef struct vt_rt_global_consume_info {
+    uint64_t queue_base;
+    uint64_t completion_base;
+    uint64_t hit_attribute_base;
+    uint64_t miss_sbt_base;
+    uint64_t hit_sbt_base;
+    uint32_t capacity_rays;
+    uint32_t hit_attribute_stride_bytes;
+    uint32_t max_batch_rays;
+    uint64_t miss_sbt_stride_bytes;
+    uint64_t hit_sbt_stride_bytes;
+    uint64_t candidate_hit_attribute_base;
+    uint32_t candidate_hit_attribute_stride_bytes;
+    uint32_t reserved;
+} vt_rt_global_consume_info;
+
+/* Completion has selected a miss/closest-hit stage.  The bridge must run that
+ * stage, then use continuation_id to select the CPS resume ELF entry. */
+typedef struct vt_rt_resume_request {
+    uint64_t payload_address;
+    uint32_t ray_ref;
+    uint32_t completed_stage;
+    uint32_t callback_group;
+    uint32_t cps_frame;
+    uint32_t cps_stack_size;
+    uint32_t continuation_id;
+    uint32_t launch_id_x;
+    uint32_t launch_id_y;
+    uint32_t launch_id_z;
+} vt_rt_resume_request;
 
 // Kernel metadata buffer offsets (pointed to by CSR_KNL)
 #define KNL_ENTRY 0
@@ -170,6 +209,38 @@ int vt_copy_from_dev(vt_device_h hdevice, uint64_t dev_vaddr, void *dst_addr, ui
 /// @param taskID 该kernel属于哪个context
 /// @return 若无错误则返回0，否则返回-1
 int vt_start(vt_device_h hdevice, vt_kernel_metadata_t* metaData, uint64_t taskID);
+
+/* Consume a sealed global RT producer phase without executing any shader.
+ * The resulting requests remain queryable through vt_rt_get_resume_requests.
+ */
+int vt_rt_consume_global(vt_device_h hdevice,
+                         const vt_rt_global_consume_info *info,
+                         uint32_t *out_request_count);
+
+/* Query with requests=NULL and capacity=0, then copy all retained requests.
+ * Returns -2 if capacity is smaller than the required request count. */
+int vt_rt_get_resume_requests(vt_device_h hdevice,
+                              vt_rt_resume_request *requests,
+                              uint32_t capacity,
+                              uint32_t *out_request_count);
+
+/* Consume any-hit decisions published in the candidate completion planes and
+ * resume the same RTcore-private traversal contexts.  Results replace the
+ * retained request list and may contain another candidate or a terminal ray. */
+int vt_rt_resume_global_candidates(vt_device_h hdevice,
+                                   const vt_rt_global_consume_info *info,
+                                   const uint32_t *ray_refs,
+                                   uint32_t ray_ref_count,
+                                   uint32_t *out_request_count);
+
+/* A completed procedural callback has already evaluated every report site
+ * (including its inlined any-hit).  Consume its final ray_ref-indexed
+ * committed record and resume the parked RTcore traversal exactly once. */
+int vt_rt_resume_global_intersections(vt_device_h hdevice,
+                                      const vt_rt_global_consume_info *info,
+                                      const uint32_t *ray_refs,
+                                      uint32_t ray_ref_count,
+                                      uint32_t *out_request_count);
 
 /// @brief 【已实现】等待设备执行完成
 /// @param hdevice 指向设备的指针

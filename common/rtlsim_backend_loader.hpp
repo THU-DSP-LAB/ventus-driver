@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstdio>
 #include <dlfcn.h>
 #include <fmt/core.h>
 #include <stdexcept>
@@ -39,6 +40,8 @@ struct Api {
     uint32_t (*persistent_state_version)() = nullptr;
     const ventus_rtlsim_step_result_t *(*step)(ventus_rtlsim_t *) = nullptr;
     ventus_rtlsim_pmu_t (*get_pmu)(const ventus_rtlsim_t *) = nullptr;
+    ventus_rtlsim_rtcore_pmu_view_t (*get_rtcore_pmu)(const ventus_rtlsim_t *) = nullptr;
+    int (*dump_extended_pmu)(const ventus_rtlsim_t *, FILE *) = nullptr;
     void (*icache_invalidate)(ventus_rtlsim_t *) = nullptr;
     void (*dcache_host_invalidate)(ventus_rtlsim_t *) = nullptr;
     void (*add_kernel)(
@@ -187,8 +190,14 @@ inline Api open_library(std::string_view soname, FirmwareApiRequirement firmware
     );
     api.get_pmu =
         load_symbol<ventus_rtlsim_pmu_t (*)(const ventus_rtlsim_t *)>(handle, "ventus_rtlsim_get_pmu");
+    api.get_rtcore_pmu = load_optional_symbol<ventus_rtlsim_rtcore_pmu_view_t (*)(const ventus_rtlsim_t *)>(
+        handle, "ventus_rtlsim_get_rtcore_pmu"
+    );
     api.icache_invalidate =
         load_symbol<void (*)(ventus_rtlsim_t *)>(handle, "ventus_rtlsim_icache_invalidate");
+    // Optional so existing off/basic runtimes remain loadable.
+    api.dump_extended_pmu = load_optional_symbol<int (*)(const ventus_rtlsim_t *, FILE *)>(
+        handle, "ventus_rtlsim_dump_extended_pmu");
     api.dcache_host_invalidate = load_optional_symbol<void (*)(ventus_rtlsim_t *)>(
         handle, "ventus_rtlsim_dcache_host_invalidate"
     );

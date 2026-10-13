@@ -8,6 +8,7 @@
 #include "ventus.h"
 #include "loadelf.hpp"
 #include "rtl_buffer_allocator.hpp"
+#include "rt_spill_pool.hpp"
 #include "rtl_raw_state.hpp"
 #include "rtl_state_contract.hpp"
 #include "rtlsim_wait_deadline.hpp"
@@ -16,11 +17,13 @@
 #include "utils.hpp"
 #include "ventus_rtlsim.h"
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fmt/core.h>
 #include <memory>
+#include <unordered_map>
 #include <string>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -31,8 +34,23 @@
 // static std::map<int, uint64_t> ptroots; // pagetable root physical address
 static std::shared_ptr<spdlog::logger> logger;
 
+int vt_dump_perf(vt_device_h device, FILE *stream);
+
 namespace {
 RtlBufferAllocator g_rtl_buffer_allocator;
+// Hidden RT memory follows the same allocation/PMEM contract as application
+// buffers, but is never exposed in shader arguments or classified as PDS.
+struct SpillPoolAllocator {
+    vt_device_h device;
+    uint64_t alloc(uint64_t bytes) {
+        uint64_t address = 0;
+        return vt_buf_alloc(device, bytes, &address, 0, 0, 0) == 0 ? address : 0;
+    }
+    bool free(uint64_t address, uint64_t bytes) {
+        return vt_buf_free(device, bytes, &address, 0, 0) == 0;
+    }
+};
+std::unordered_map<ventus_rtlsim_t *, RtSpillPool> g_rt_spill_pools;
 ventus::rtl_state::AllocationContract g_allocation_contract;
 ventus::rtl_state::RawState g_raw_state;
 bool g_kernel_inflight = false;
@@ -231,6 +249,7 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     auto env_waveform = std::getenv("VENTUS_WAVEFORM");
     auto env_waveform_begin = std::getenv("VENTUS_WAVEFORM_BEGIN");
     auto env_waveform_end = std::getenv("VENTUS_WAVEFORM_END");
+    auto env_waveform_file = std::getenv("VENTUS_WAVEFORM_FILE");
     bool waveform_enable = false;
     uint64_t waveform_begin = UINT64_MAX; // default: not enable
     uint64_t waveform_end = 0;
@@ -249,7 +268,9 @@ extern int vt_dev_open(vt_device_h *hdevice) {
     config.waveform.enable = waveform_enable;
     config.waveform.time_begin = waveform_begin;
     config.waveform.time_end = waveform_end;
-    config.waveform.filename = "waveform.rtl.fst";
+    config.waveform.filename = (env_waveform_file != nullptr && env_waveform_file[0] != '\0')
+                                   ? env_waveform_file
+                                   : "waveform.rtl.fst";
     config.snapshot.enable = false;
     config.hang_timeout = ventus::rtlsim_watchdog::hang_timeout_from_env();
     const auto log_level = parse_log_level(std::getenv("VENTUS_RTLSIM_LOG_LEVEL"));
@@ -324,9 +345,27 @@ extern int vt_dev_open(vt_device_h *hdevice) {
         }
     }
     *hdevice = device;
-    logger = spdlog::stdout_color_mt("ventus");
+    logger = spdlog::get("ventus");
+    if (!logger) logger = spdlog::stdout_color_mt("ventus");
     logger->set_level(log_level);
     logger->set_pattern("[%l] %v [%s:%#]");
+    // Allocate hidden device-lifetime storage before application buffers.
+    // Raw-state replay must claim allocations in exactly their original
+    // order, including this pool; allocating it lazily at vt_start would
+    // interleave it with host allocations from later dispatches.
+    uint32_t cores = 0;
+    SpillPoolAllocator allocator{device};
+    if (rtl().get_parameter("num_sm", &cores) != 0 ||
+        !g_rt_spill_pools[device].prepare_dispatch(allocator, cores)) {
+        SPDLOG_LOGGER_ERROR(logger, "driver-private RT spill pool allocation failed");
+        g_rt_spill_pools.erase(device);
+        if (rtl().finish_checked != nullptr)
+            rtl().finish_checked(device, false);
+        else
+            rtl().finish(device, false);
+        *hdevice = nullptr;
+        return -1;
+    }
     SPDLOG_LOGGER_DEBUG(logger, "vt_dev_open : hello world from ventus.cpp (rtlsim device)");
     return 0;
 }
@@ -335,6 +374,17 @@ extern int vt_dev_open(vt_device_h *hdevice) {
 extern int vt_dev_close(vt_device_h hdevice) {
     if (hdevice == nullptr) return -1;
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
+    if (const char *path = std::getenv("VENTUS_RTLSIM_PERF_JSON"); path != nullptr && path[0] != '\0') {
+        FILE *stream = std::fopen(path, "w");
+        if (stream == nullptr) {
+            SPDLOG_LOGGER_ERROR(logger, "failed to open RTL performance JSON: {}", path);
+        } else {
+            if (vt_dump_perf(hdevice, stream) != 0) {
+                SPDLOG_LOGGER_ERROR(logger, "failed to write RTL performance JSON: {}", path);
+            }
+            std::fclose(stream);
+        }
+    }
     int result = 0;
     if (g_kernel_inflight || g_allocation_contract.compare_only()) {
         SPDLOG_LOGGER_ERROR(
@@ -344,6 +394,17 @@ extern int vt_dev_close(vt_device_h hdevice) {
             g_kernel_inflight, g_allocation_contract.compare_only()
         );
         result = -1;
+    }
+    auto pool = g_rt_spill_pools.find(device);
+    if (pool != g_rt_spill_pools.end()) {
+        // Never unregister memory beneath an unfinished kernel or rebind.
+        // The simulator is destroyed below; the next open resets allocation
+        // bookkeeping even when this close reports an incomplete boundary.
+        if (result == 0) {
+            SpillPoolAllocator allocator{hdevice};
+            pool->second.release(allocator);
+        }
+        g_rt_spill_pools.erase(pool);
     }
     if (rtl().finish_checked != nullptr) {
         const int finish_result = rtl().finish_checked(device, false);
@@ -622,6 +683,14 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
         return -1;
     }
     auto device = static_cast<ventus_rtlsim_t *>(hdevice);
+    uint32_t cores = 0;
+    if (rtl().get_parameter("num_sm", &cores) != 0) return -1;
+    auto &spill_pool = g_rt_spill_pools[device];
+    SpillPoolAllocator allocator{hdevice};
+    if (!spill_pool.prepare_dispatch(allocator, cores)) {
+        SPDLOG_LOGGER_ERROR(logger, "driver-private RT spill pool allocation failed");
+        return -1;
+    }
     ventus_kernel_metadata_t mtd_sim{
         .name = mtd_driver->kernel_name,
         .data = nullptr,
@@ -647,6 +716,10 @@ extern int vt_start(vt_device_h hdevice, vt_kernel_metadata_t *mtd_driver, uint6
             {mtd_driver->threadIdxOffset[0], mtd_driver->threadIdxOffset[1],
              mtd_driver->threadIdxOffset[2]},
         .num_buffer = 0,
+        .rtSpillPoolBase = spill_pool.spill_base(),
+        .rtSpillSlotsPerCore = RtSpillPool::kSlotsPerCore,
+        .rtSpillPerCoreStride = RtSpillPool::kCoreStride,
+        .rtSpillDispatchEpoch = spill_pool.epoch(),
     };
     SPDLOG_LOGGER_DEBUG(
         logger,
@@ -753,4 +826,85 @@ extern int vt_upload_kernel_file(vt_device_h hdevice, const char *filename, int 
 int vt_upload_kernel_bytes(vt_device_h device, const void *content, uint64_t size, int taskID) {
     return 0;
 }
-int vt_dump_perf(vt_device_h device, FILE *stream) { return 0; }
+int vt_dump_perf(vt_device_h device, FILE *stream) {
+    if (device == nullptr || stream == nullptr) return -1;
+
+    if (rtl().get_rtcore_pmu == nullptr) return -1;
+    const auto pmu = rtl().get_rtcore_pmu(static_cast<ventus_rtlsim_t *>(device));
+    if (pmu.rtcore == nullptr) return -1;
+
+    uint32_t external_memory_latency = 0;
+    if (rtl().get_parameter("rtl_external_mem_latency", &external_memory_latency) != 0) return -1;
+
+    std::fprintf(
+        stream,
+        "{\"schema_version\":2,\"simulator\":\"verilator-rtl\","
+        "\"simulation_time_units\":%llu,\"clock_cycles\":%llu,"
+        "\"external_memory_read_latency_cycles\":%u,\"sm\":[",
+        static_cast<unsigned long long>(rtl().get_time(static_cast<ventus_rtlsim_t *>(device))),
+        static_cast<unsigned long long>(rtl().get_time(static_cast<ventus_rtlsim_t *>(device)) / 10),
+        external_memory_latency
+    );
+    for (uint32_t sm = 0; sm < pmu.num_sm; ++sm) {
+        const auto &rt = pmu.rtcore[sm];
+        if (sm != 0) std::fputc(',', stream);
+        std::fprintf(
+            stream,
+            "{\"id\":%u,\"rtcore\":{"
+            "\"traverse_issued\":%llu,\"traverse_active_lanes\":%llu,"
+            "\"completion_count\":%llu,\"completion_lanes\":%llu,\"release_issued\":%llu,"
+            "\"active_session_cycles\":%llu,\"command_backpressure_cycles\":%llu,"
+            "\"completion_backpressure_cycles\":%llu,\"release_backpressure_cycles\":%llu,"
+            "\"local_sram_read_requests\":%llu,\"local_sram_write_requests\":%llu,"
+            "\"local_sram_read_responses\":%llu,\"local_sram_backpressure_cycles\":%llu,"
+            "\"ray_setup_outputs\":%llu,\"as_line_acquires\":%llu,\"as_line_ready\":%llu,"
+            "\"as_acquire_backpressure_cycles\":%llu,\"as_cache_resident_hits\":%llu,"
+            "\"as_cache_pending_merges\":%llu,\"as_cache_misses\":%llu,\"as_cache_refills\":%llu,"
+            "\"as_cache_evictions\":%llu,\"as_cache_average_waiter_uses\":%.6f,"
+            "\"box4_issued\":%llu,\"box4_results\":%llu,"
+            "\"triangle_issued\":%llu,\"triangle_results\":%llu,"
+            "\"triangle_resolve_issued\":%llu,\"triangle_resolve_results\":%llu,"
+            "\"stack_pushes\":%llu,\"stack_pops\":%llu}}",
+            sm,
+            static_cast<unsigned long long>(rt.traverse_issued),
+            static_cast<unsigned long long>(rt.traverse_active_lanes),
+            static_cast<unsigned long long>(rt.completion_count),
+            static_cast<unsigned long long>(rt.completion_lanes),
+            static_cast<unsigned long long>(rt.release_issued),
+            static_cast<unsigned long long>(rt.active_session_cycles),
+            static_cast<unsigned long long>(rt.command_backpressure_cycles),
+            static_cast<unsigned long long>(rt.completion_backpressure_cycles),
+            static_cast<unsigned long long>(rt.release_backpressure_cycles),
+            static_cast<unsigned long long>(rt.local_sram_read_requests),
+            static_cast<unsigned long long>(rt.local_sram_write_requests),
+            static_cast<unsigned long long>(rt.local_sram_read_responses),
+            static_cast<unsigned long long>(rt.local_sram_backpressure_cycles),
+            static_cast<unsigned long long>(rt.ray_setup_outputs),
+            static_cast<unsigned long long>(rt.as_line_acquires),
+            static_cast<unsigned long long>(rt.as_line_ready),
+            static_cast<unsigned long long>(rt.as_acquire_backpressure_cycles),
+            static_cast<unsigned long long>(rt.as_cache_resident_hits),
+            static_cast<unsigned long long>(rt.as_cache_pending_merges),
+            static_cast<unsigned long long>(rt.as_cache_misses),
+            static_cast<unsigned long long>(rt.as_cache_refills),
+            static_cast<unsigned long long>(rt.as_cache_evictions),
+            rt.as_cache_refills == 0 ? 0.0 :
+              static_cast<double>(rt.as_line_ready) / static_cast<double>(rt.as_cache_refills),
+            static_cast<unsigned long long>(rt.box4_issued),
+            static_cast<unsigned long long>(rt.box4_results),
+            static_cast<unsigned long long>(rt.triangle_issued),
+            static_cast<unsigned long long>(rt.triangle_results),
+            static_cast<unsigned long long>(rt.triangle_resolve_issued),
+            static_cast<unsigned long long>(rt.triangle_resolve_results),
+            static_cast<unsigned long long>(rt.stack_pushes),
+            static_cast<unsigned long long>(rt.stack_pops)
+        );
+    }
+    std::fputs("],\"extended\":", stream);
+    if (rtl().dump_extended_pmu) {
+        if (rtl().dump_extended_pmu(static_cast<ventus_rtlsim_t *>(device), stream) != 0) return -1;
+    } else {
+        std::fputs("null", stream);
+    }
+    return std::fprintf(stream, "}\n") < 0 ? -1 : 0;
+}
